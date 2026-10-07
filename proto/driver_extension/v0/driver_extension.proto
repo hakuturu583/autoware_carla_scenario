@@ -84,13 +84,16 @@ message RendererData {
   // Posted speed limit for the ego lane, in m/s. 0 when unknown.
   float speed_limit_mps = 7;
   repeated ActorState actors = 8;
-  // The drivable lanes around the ego, in the rig frame at
-  // `snapshot_timestamp_us`. Empty unless the runtime is configured to send
-  // them (`RuntimeConfig.send_lanes`): a map-conditioned policy needs them, and
+  // The drivable lanes around the ego, in the ego's TRUE rig frame at
+  // `snapshot_timestamp_us` -- as a perception or map-matching output would be,
+  // not the estimated frame egomotion noise (if configured) puts the route in.
+  // Empty unless the runtime is configured to send them
+  // (`RuntimeConfig.send_lanes`): a map-conditioned policy needs them, and
   // nothing else should pay for them.
   repeated Lane lanes = 9;
   // One sweep per configured LiDAR, in the rig frame, except on a tick whose
-  // sweep did not arrive in time (counted in the `sensor_timeouts` metric).
+  // sweep did not arrive in time. The `sensor_timeouts` metric counts such
+  // misses for every sensor on every simulator tick, sent or not.
   // Empty unless `RuntimeConfig.lidars` configures one. Carried here because
   // the egodriver contract has no LiDAR submission RPC.
   repeated LidarSweep lidar = 10;

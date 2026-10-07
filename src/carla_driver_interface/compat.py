@@ -185,7 +185,7 @@ COMPAT_ENTRIES: tuple[CompatEntry, ...] = (
         "contract has no LiDAR submission RPC to deliver them to a driver",
         "Opt-in (RuntimeConfig.lidars): one full sweep per configured sensor rides in "
         "RendererData.lidar as rig-frame float32 x, y, z, intensity (absent on a tick whose "
-        "sweep arrived too late, counted as sensor_timeouts)",
+        "sweep arrived too late; sensor_timeouts counts misses on every tick)",
         CompatLevel.COMPAT_LEVEL_EXTENSION,
         "driver_extension.v0.LidarSweep",
     ),

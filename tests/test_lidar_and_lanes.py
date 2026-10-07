@@ -234,6 +234,9 @@ def _waypoint(road, section, lane, s, x, y, yaw_deg, width=3.5, left="Solid", ri
             location=SimpleNamespace(x=x, y=y, z=0.0),
             get_right_vector=lambda rv=right_vector: rv,
         ),
+        # Ends here unless a test says otherwise: past a lane's end, CARLA's
+        # Waypoint.next returns no waypoint at all.
+        next=lambda d: [],
     )
 
 
@@ -405,11 +408,7 @@ def test_a_lane_runs_on_to_its_end_past_the_last_sample():
     elsewhere = _waypoint(2, 0, -1, 0.0, 3.0, 1.75, 0.0)
     first = _ends_at(_waypoint(1, 0, -1, 0.0, 0.0, 1.75, 0.0), 1.5, [elsewhere])
 
-    (lane,) = [
-        lane
-        for lane in carla_lane_geometries(_StandInMap([first]), 2.0, lambda wp: 0.0)
-        if lane.lane_id == "1:0:-1"
-    ]
+    (lane,) = carla_lane_geometries(_StandInMap([first]), 2.0, lambda wp: 0.0)
     # A one-sample section, kept by finding where it ends.
     np.testing.assert_allclose(lane.centerline[:, 0], [0.0, 1.5], atol=0.01)
 
@@ -419,3 +418,17 @@ def test_a_lane_ending_mid_road_is_read_without_walking_off_it():
     first = _ends_at(_waypoint(1, 0, -1, 0.0, 0.0, 1.75, 0.0), 0.8, [])
     (lane,) = carla_lane_geometries(_StandInMap([first]), 2.0, lambda wp: 0.0)
     np.testing.assert_allclose(lane.centerline[-1, 0], 0.8, atol=0.01)
+
+
+def test_a_positive_lane_is_extended_at_its_driving_direction_end():
+    # Lane +1 drives against s: samples at s = 4, 2, 0 run x = 4 -> 0, and the
+    # lane goes on to x = -1.2 past the last sample.
+    samples = [_waypoint(1, 0, 1, s, s, -1.75, 180.0) for s in (0.0, 2.0, 4.0)]
+
+    def next_(d):
+        x = -d
+        return [_waypoint(1, 0, 1, 0.0, x, -1.75, 180.0)] if x >= -1.2 else []
+
+    samples[0].next = next_  # the s = 0 sample is the driving-direction end
+    (lane,) = carla_lane_geometries(_StandInMap(samples), 2.0, lambda wp: 0.0)
+    np.testing.assert_allclose(lane.centerline[:, 0], [4.0, 2.0, 0.0, -1.2], atol=0.01)

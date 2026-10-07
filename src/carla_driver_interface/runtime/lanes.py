@@ -197,9 +197,7 @@ def _lane_end(last: Any, lane_id: str, step_m: float, min_gap_m: float = 0.01) -
     lane drop) and loops forever on a road whose lane succeeds itself --
     neither catchable from Python.
     """
-    step = getattr(last, "next", None)
-    if step is None:
-        return None
+    step = last.next
     low, high, end = 0.0, float(step_m), None
     for _ in range(10):  # ~1 mm at a 2 m resolution
         middle = 0.5 * (low + high)
@@ -243,8 +241,8 @@ def carla_lane_geometries(
             waypoints.reverse()
         # generate_waypoints samples every `resolution_m`, so a lane stops up to
         # that short of its end and a section shorter than it is one point.
-        # Finding the end closes the gap to the next section and keeps short
-        # connectors in the graph.
+        # Finding the end closes the gap to the next section and keeps such a
+        # section; one with no sample at all is still missed.
         end = _lane_end(waypoints[-1], lane_id, resolution_m)
         if end is not None:
             waypoints.append(end)

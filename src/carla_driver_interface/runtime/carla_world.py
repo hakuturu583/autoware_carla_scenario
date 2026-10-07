@@ -13,6 +13,7 @@ version string, because forks report versions inconsistently.
 from __future__ import annotations
 
 import logging
+import math
 import queue
 import random
 import time
@@ -343,13 +344,12 @@ class CarlaWorldAdapter:
         return cameras
 
     def _make_camera_callback(self, cam: CameraConfig, frames: queue.Queue):
-        """Queue the raw frame; encoding happens in :meth:`_drain_captures`.
+        """Queue the raw frame; :meth:`_drain_captures` takes this tick's and encodes it.
 
-        The sensor fires on every tick but
-        only the last tick of a policy step is ever submitted, so encoding here
-        would compress frames nobody sees -- measured at roughly a fifth of the
-        rollout. Copying the buffer is unavoidable (it is only valid for the
-        duration of the callback); the JPEG is not.
+        The sensor fires on every tick, and every tick's newest frame is
+        encoded, though only a policy step's last tick is submitted. Copying the
+        buffer is unavoidable (it is only valid for the duration of the
+        callback).
         """
         epoch = self.config.epoch_offset_us
 
@@ -497,10 +497,16 @@ class CarlaWorldAdapter:
             # A connector shorter than the step can lie between two samples;
             # look in between so it still counts as on the route.
             for fraction in (0.25, 0.5, 0.75, 1.0):
-                probe = previous.next(step * fraction) if fraction < 1.0 else [waypoint]
-                if len(probe) != 1:
+                probe = (
+                    self._on_the_way(
+                        previous.next(step * fraction), waypoint, step * (1 - fraction)
+                    )
+                    if fraction < 1.0
+                    else waypoint
+                )
+                if probe is None:
                     continue
-                lane_id = carla_lane_key(probe[0])
+                lane_id = carla_lane_key(probe)
                 if lane_id != self._route_lane_ids[-1]:
                     self._route_lane_ids.append(lane_id)
             travelled += step
@@ -511,6 +517,24 @@ class CarlaWorldAdapter:
                 "connected lanes at that location"
             )
         return np.stack(points)
+
+    @staticmethod
+    def _on_the_way(options: list, chosen: Any, remaining_m: float) -> Any:
+        """The option that ``remaining_m`` further on reaches ``chosen``, if any.
+
+        Past a junction's branch point ``next`` offers every branch; only the
+        one leading to the waypoint the route took is on the route.
+        """
+        if len(options) == 1:
+            return options[0]
+        target = chosen.transform.location
+        for option in options:
+            for onward in option.next(max(remaining_m, 0.01)):
+                spot = onward.transform.location
+                same_lane = carla_lane_key(onward) == carla_lane_key(chosen)
+                if same_lane and math.dist((spot.x, spot.y), (target.x, target.y)) < 0.5:
+                    return option
+        return None
 
     # -- stepping ----------------------------------------------------------
 

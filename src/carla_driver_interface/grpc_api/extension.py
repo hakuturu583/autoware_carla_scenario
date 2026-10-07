@@ -52,7 +52,7 @@ LIDAR_POINT_COLUMNS = 4
 
 #: The wire byte order of every packed array (``points_xyzi``, the lane
 #: polylines), stated rather than left to the host.
-_LIDAR_DTYPE = np.dtype("<f4")
+_WIRE_DTYPE = np.dtype("<f4")
 
 
 def pack_renderer_data(data: RendererData) -> bytes:
@@ -94,7 +94,7 @@ def pack_lidar_sweep(
     rig_to_lidar: Pose,
 ) -> LidarSweep:
     """Build one ``LidarSweep`` from ``[N, 4]`` rig-frame points."""
-    points = np.ascontiguousarray(points_xyzi_in_rig, dtype=_LIDAR_DTYPE)
+    points = np.ascontiguousarray(points_xyzi_in_rig, dtype=_WIRE_DTYPE)
     if points.ndim != 2 or points.shape[1] != LIDAR_POINT_COLUMNS:
         raise ValueError(
             f"LiDAR points must be [N, {LIDAR_POINT_COLUMNS}] (x, y, z, intensity); "
@@ -116,13 +116,13 @@ def unpack_lidar_points(sweep: LidarSweep) -> np.ndarray:
     unlike the outer ``renderer_data`` bytes, a sweep that parsed as one is ours,
     and a short buffer means it was corrupted, not that it belongs to a peer.
     """
-    expected = int(sweep.num_points) * LIDAR_POINT_COLUMNS * _LIDAR_DTYPE.itemsize
+    expected = int(sweep.num_points) * LIDAR_POINT_COLUMNS * _WIRE_DTYPE.itemsize
     if len(sweep.points_xyzi) != expected:
         raise ValueError(
             f"LiDAR sweep {sweep.logical_id!r} declares {sweep.num_points} points "
             f"({expected} bytes) but carries {len(sweep.points_xyzi)} bytes"
         )
-    flat = np.frombuffer(sweep.points_xyzi, dtype=_LIDAR_DTYPE)
+    flat = np.frombuffer(sweep.points_xyzi, dtype=_WIRE_DTYPE)
     return flat.reshape(-1, LIDAR_POINT_COLUMNS).astype(np.float32, copy=True)
 
 
@@ -131,7 +131,7 @@ def pack_lane_polylines(
 ) -> dict:
     """``Lane`` field values for three ``[N, 3]`` rig-frame polylines of one length."""
     arrays = [
-        np.ascontiguousarray(a, dtype=_LIDAR_DTYPE)
+        np.ascontiguousarray(a, dtype=_WIRE_DTYPE)
         for a in (centerline, left_boundary, right_boundary)
     ]
     shapes = {a.shape for a in arrays}
@@ -151,7 +151,7 @@ def lane_polylines(lane: Lane) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     Raises when a polyline's size disagrees with ``num_points``, for the same
     reason :func:`unpack_lidar_points` does.
     """
-    expected = int(lane.num_points) * 3 * _LIDAR_DTYPE.itemsize
+    expected = int(lane.num_points) * 3 * _WIRE_DTYPE.itemsize
     out = []
     for name in ("centerline_xyz", "left_boundary_xyz", "right_boundary_xyz"):
         payload = getattr(lane, name)
@@ -160,5 +160,5 @@ def lane_polylines(lane: Lane) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
                 f"lane {lane.lane_id!r}: {name} carries {len(payload)} bytes, "
                 f"{lane.num_points} points need {expected}"
             )
-        out.append(np.frombuffer(payload, dtype=_LIDAR_DTYPE).reshape(-1, 3).astype(np.float64))
+        out.append(np.frombuffer(payload, dtype=_WIRE_DTYPE).reshape(-1, 3).astype(np.float64))
     return out[0], out[1], out[2]

@@ -261,16 +261,16 @@ class CarlaRuntime:
 
             self._submit_observations(stub, session_uuid, snapshot)
 
-            started = time.perf_counter()
-            response = stub.drive(
-                DriveRequest(
-                    session_uuid=session_uuid,
-                    time_now_us=step_start_us,
-                    time_query_us=target_time_us,
-                    renderer_data=pack_renderer_data(self._renderer_data(snapshot)),
-                ),
-                timeout=self.config.driver_timeout_s,
+            # Built before the clock starts: drive_latency_s is the driver's
+            # time, and with lanes and LiDAR the payload is no longer free.
+            request = DriveRequest(
+                session_uuid=session_uuid,
+                time_now_us=step_start_us,
+                time_query_us=target_time_us,
+                renderer_data=pack_renderer_data(self._renderer_data(snapshot)),
             )
+            started = time.perf_counter()
+            response = stub.drive(request, timeout=self.config.driver_timeout_s)
             latency = time.perf_counter() - started
             steps += 1
 
