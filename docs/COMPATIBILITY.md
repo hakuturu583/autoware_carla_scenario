@@ -107,14 +107,16 @@ into a forward one.
 
 | Area | alpasim | carla_driver_interface |
 |---|---|---|
-| **Renderer payload** | `DriveRequest.renderer_data` is free-form and NRE-specific | Carries a serialized `carla_driver.v0.CarlaRendererData`: map, weather, traffic light, speed limit, other actors. Drivers that ignore it are unaffected |
-| **Driver debug payload** | `DebugInfo.unstructured_debug_info` is free-form | Carries a serialized `carla_driver.v0.CarlaDriveDebugInfo` |
+| **Renderer payload** | `DriveRequest.renderer_data` is free-form and NRE-specific | Carries a serialized `driver_extension.v0.RendererData`: map, weather, traffic light, speed limit, other actors, and the opt-in lanes and LiDAR below. Drivers that ignore it are unaffected |
+| **LiDAR** | `SensorsimService.render_lidar` produces point clouds, but **the egodriver contract has no LiDAR submission RPC** to deliver them to a driver | Opt-in via `RuntimeConfig.lidars` (`--lidar`): one full sweep per sensor rides in `RendererData.lidar` as packed rig-frame float32 `x, y, z, intensity`. The sensor is pinned to one revolution per tick so every sweep is a full 360° |
+| **Lane map** | No vector map reaches the driver; alpasim drivers read the route only | Opt-in via `RuntimeConfig.send_lanes` (`--lanes`): the lanes within `lane_horizon_m` ride in `RendererData.lanes` as rig-frame centreline and boundaries, with markings, the governing light, the posted limit and `route_index` |
+| **Driver debug payload** | `DebugInfo.unstructured_debug_info` is free-form | Carries a serialized `driver_extension.v0.DriveDebugInfo` |
 
-`proto/carla_driver/v0/carla_driver.proto` **declares no service at all**.
+`proto/driver_extension/v0/driver_extension.proto` **declares no service at all**.
 Declaring one would create a second, incompatible way to talk to a driver;
 `test_our_proto_declares_no_service` prevents it. The extension messages
 `import` upstream types and compose them rather than copying, so
-`CarlaDriveSessionInfo.base` *is* upstream's `egodriver.DriveSessionRequest`.
+`DriveSessionInfo.base` *is* upstream's `egodriver.DriveSessionRequest`.
 
 Unpacking is deliberately tolerant. An upstream alpasim runtime may put
 something else entirely in `renderer_data`; the driver treats an unparseable
@@ -131,7 +133,6 @@ policy.
 |---|---|---|
 | **Structured logging** | `logging.proto` records every request and response into an ASL log | Not implemented; the runtime logs through the standard `logging` module |
 | **Video model** | `video_model.proto` drives a generative video model | Not implemented |
-| **LiDAR** | `SensorsimService.render_lidar` produces point clouds | Not implemented — **the egodriver contract has no LiDAR submission RPC**, so there would be nowhere to deliver it |
 | **Runtime gRPC surface** | `RuntimeService.simulate` / `prefetch_scene` / `get_runtime_info` / `shut_down` | Not served; `CarlaRuntime` is used as a Python class |
 
 ---

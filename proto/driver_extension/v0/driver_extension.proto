@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// CARLA-specific extensions to the alpasim egodriver contract.
+// Simulator-agnostic extensions to the alpasim egodriver contract.
+//
+// The names say what a message carries, never which simulator produced it: the
+// same payload describes a CARLA world today and can describe another runtime's
+// tomorrow, and a driver reading it should not have to care which.
 //
 // Nothing here changes the alpasim wire format.  The upstream service
 // `egodriver.EgodriverService` is used verbatim (see `alpasim_grpc`); the
@@ -8,17 +12,17 @@
 // upstream already provides:
 //
 //   * `egodriver.DriveRequest.renderer_data`
-//         -> serialized `carla_driver.v0.CarlaRendererData`
+//         -> serialized `driver_extension.v0.RendererData`
 //   * `egodriver.DriveResponse.DebugInfo.unstructured_debug_info`
-//         -> serialized `carla_driver.v0.CarlaDriveDebugInfo`
+//         -> serialized `driver_extension.v0.DriveDebugInfo`
 //
 // A driver that ignores those bytes stays fully compatible; a driver that wants
-// CARLA ground truth can parse them.  Upstream messages are imported and
+// simulator ground truth can parse them.  Upstream messages are imported and
 // composed (never redefined) so field numbers can never drift.
 
 syntax = "proto3";
 
-package carla_driver.v0;
+package driver_extension.v0;
 
 import "alpasim_grpc/v0/common.proto";
 import "alpasim_grpc/v0/egodriver.proto";
@@ -38,7 +42,7 @@ enum TrafficLightState {
   TRAFFIC_LIGHT_STATE_OFF = 5;
 }
 
-message CarlaWeather {
+message Weather {
   float cloudiness = 1;
   float precipitation = 2;
   float precipitation_deposits = 3;
@@ -50,22 +54,22 @@ message CarlaWeather {
 }
 
 // An actor other than the ego, in the alpasim `local` frame (right handed,
-// already converted out of CARLA's left handed world).
-message CarlaActorState {
+// already converted out of the simulator's own convention).
+message ActorState {
   string track_id = 1;
-  string type_id = 2; // CARLA blueprint id, e.g. "vehicle.tesla.model3"
+  string type_id = 2; // Simulator type id, e.g. CARLA's "vehicle.tesla.model3"
   common.Pose pose_local_to_aabb = 3;
   common.AABB aabb = 4;
   common.DynamicState dynamic_state = 5;
 }
 
 // Packed into `egodriver.DriveRequest.renderer_data`.
-message CarlaRendererData {
+message RendererData {
   fixed64 snapshot_timestamp_us = 1;
-  // CARLA world snapshot frame counter; useful for correlating with recordings.
+  // Simulator frame counter; useful for correlating with recordings.
   uint64 frame_id = 2;
   string map_name = 3;
-  CarlaWeather weather = 4;
+  Weather weather = 4;
   TrafficLightState ego_traffic_light = 5;
   // Distance to the governing traffic light's stop line, in metres, measured
   // along the ego's heading.
@@ -79,7 +83,75 @@ message CarlaRendererData {
   float ego_traffic_light_distance_m = 6;
   // Posted speed limit for the ego lane, in m/s. 0 when unknown.
   float speed_limit_mps = 7;
-  repeated CarlaActorState actors = 8;
+  repeated ActorState actors = 8;
+  // The drivable lanes around the ego, in the rig frame at
+  // `snapshot_timestamp_us`. Empty unless the runtime is configured to send
+  // them (`RuntimeConfig.send_lanes`): a map-conditioned policy needs them, and
+  // nothing else should pay for them.
+  repeated Lane lanes = 9;
+  // One sweep per configured LiDAR, in the rig frame. Empty unless
+  // `RuntimeConfig.lidars` configures one. Carried here because the egodriver
+  // contract has no LiDAR submission RPC.
+  repeated LidarSweep lidar = 10;
+}
+
+// Lane marking on one side of a lane. The values follow OpenDRIVE's road-mark
+// types, which CARLA's `carla.LaneMarkingType` also mirrors.
+enum LaneMarkingType {
+  LANE_MARKING_TYPE_UNKNOWN = 0;
+  LANE_MARKING_TYPE_NONE = 1;
+  LANE_MARKING_TYPE_SOLID = 2;
+  LANE_MARKING_TYPE_BROKEN = 3;
+  LANE_MARKING_TYPE_SOLID_SOLID = 4;
+  LANE_MARKING_TYPE_SOLID_BROKEN = 5;
+  LANE_MARKING_TYPE_BROKEN_SOLID = 6;
+  LANE_MARKING_TYPE_BROKEN_BROKEN = 7;
+  LANE_MARKING_TYPE_BOTTS_DOTS = 8;
+  LANE_MARKING_TYPE_GRASS = 9;
+  LANE_MARKING_TYPE_CURB = 10;
+  LANE_MARKING_TYPE_OTHER = 11;
+}
+
+// One drivable lane, cropped to the runtime's lane horizon.
+//
+// The three polylines are sampled at the same stations, in the lane's driving
+// direction, so point i of each describes one cross-section. "Left" and
+// "right" are relative to that direction, which in the right-handed rig frame
+// puts the left boundary on the +y side of a lane heading along +x.
+message Lane {
+  // Stable across steps within a session, e.g.
+  // "<road_id>:<section_id>:<lane_id>" for an OpenDRIVE map.
+  string lane_id = 1;
+  repeated common.Vec3 centerline = 2;
+  repeated common.Vec3 left_boundary = 3;
+  repeated common.Vec3 right_boundary = 4;
+  LaneMarkingType left_marking = 5;
+  LaneMarkingType right_marking = 6;
+  // The light whose stop line lies on this lane; NONE when there is none.
+  TrafficLightState traffic_light = 7;
+  // Posted speed limit in m/s. 0 when unknown -- not "no limit".
+  float speed_limit_mps = 8;
+  // Position of this lane along the ego's route, 0 for the first lane of the
+  // route; -1 when the lane is not on the route. Lanes behind the ego keep
+  // their index, so a consumer wanting "the route from here" orders by it and
+  // drops what lies behind.
+  int32 route_index = 9;
+  bool is_junction = 10;
+}
+
+// One LiDAR sweep. Points are expressed in the rig frame (not the sensor's),
+// so a consumer never needs the mount to use them; `rig_to_lidar` is carried
+// for consumers that want the sensor origin, e.g. for ray casting.
+message LidarSweep {
+  string logical_id = 1;
+  fixed64 timestamp_us = 2;
+  common.Pose rig_to_lidar = 3;
+  uint32 num_points = 4;
+  // Little-endian float32, row-major [num_points, 4]: x, y, z in metres and
+  // intensity normalised to [0, 1]. Packed rather than `repeated Vec3` because a
+  // sweep is ~10^5 points and a message per point costs an order of magnitude
+  // in size and parse time.
+  bytes points_xyzi = 5;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -87,7 +159,7 @@ message CarlaRendererData {
 ////////////////////////////////////////////////////////////////////////////////
 
 // Packed into `egodriver.DriveResponse.DebugInfo.unstructured_debug_info`.
-message CarlaDriveDebugInfo {
+message DriveDebugInfo {
   string policy_name = 1;
   float inference_seconds = 2;
   // Free-form scalars the policy wants surfaced in the rollout metrics.
@@ -98,17 +170,17 @@ message CarlaDriveDebugInfo {
 // Session description
 ////////////////////////////////////////////////////////////////////////////////
 
-// CARLA-side view of a rollout session.  Wraps (rather than replaces) the
+// The runtime's view of a rollout session.  Wraps (rather than replaces) the
 // upstream request that is actually sent over the wire, so the two can never
 // disagree about session_uuid, seed or camera set.
-message CarlaDriveSessionInfo {
+message DriveSessionInfo {
   egodriver.DriveSessionRequest base = 1;
   string map_name = 2;
   string scenario_name = 3;
   // Simulator tick period; `policy_timestep_us` is a multiple of it.
   fixed64 fixed_delta_us = 4;
   fixed64 policy_timestep_us = 5;
-  // Longitudinal offset from the CARLA actor origin to the alpasim rig origin
+  // Longitudinal offset from the simulator's vehicle origin to the alpasim rig origin
   // (rear axle centre projected to the ground), in metres.
   float rear_axle_offset_m = 6;
   repeated nre.grpc.protos.sensorsim.AvailableCamerasReturn.AvailableCamera cameras = 7;
@@ -137,15 +209,16 @@ enum CompatLevel {
 message CompatEntry {
   string area = 1;
   string alpasim_behaviour = 2;
-  string carla_behaviour = 3;
+  // What this implementation does instead.
+  string implementation_behaviour = 3;
   CompatLevel level = 4;
   // Proto symbols this entry is about, e.g. "egodriver.DriveRequest".
   repeated string symbols = 5;
 }
 
-message CarlaCompatReport {
+message CompatReport {
   // Version of this package.
-  string carla_driver_interface_version = 1;
+  string implementation_version = 1;
   // alpasim commit the `alpasim-grpc` dependency is pinned to.
   string alpasim_grpc_rev = 2;
   // `alpasim_grpc.API_VERSION_MESSAGE`, forwarded unchanged.

@@ -24,25 +24,34 @@ import numpy as np
 from carla_driver_interface.geometry import Pose
 from carla_driver_interface.grpc_api import (
     AvailableCamera,
-    CarlaRendererData,
+    RendererData,
 )
-from carla_driver_interface.runtime.config import CameraConfig, RuntimeConfig, ScenarioSpec
+from carla_driver_interface.runtime.config import (
+    CameraConfig,
+    LidarConfig,
+    RuntimeConfig,
+    ScenarioSpec,
+)
 from carla_driver_interface.runtime.control import VehicleCommand
 from carla_driver_interface.runtime.conversions import (
     available_camera,
     camera_pose_in_rig,
     carla_transform_to_pose,
     carla_vector_to_local,
+    lidar_points_to_rig,
     rig_pose_from_actor_transform,
     seconds_to_us,
+    sensor_pose_in_rig,
     vector_local_to_rig,
     waypoint_to_local,
 )
 from carla_driver_interface.runtime.ground_truth import CarlaGroundTruth
 from carla_driver_interface.runtime.images import encode_bgra
+from carla_driver_interface.runtime.lanes import carla_lane_key
 from carla_driver_interface.runtime.world import (
     CameraCapture,
     EgoState,
+    LidarCapture,
     RolloutEvents,
     WorldSetup,
     WorldSnapshot,
@@ -85,6 +94,14 @@ class _RawFrame:
     bgra: bytes
 
 
+@dataclass(frozen=True)
+class _RawSweep:
+    """An un-converted CARLA LiDAR measurement, in the sensor's own frame."""
+
+    timestamp_us: int
+    points_xyzi: np.ndarray
+
+
 class CarlaWorldAdapter:
     """Drives a real CARLA server.
 
@@ -114,6 +131,9 @@ class CarlaWorldAdapter:
         self._sensors: list[Any] = []
         self._background: list[Any] = []
         self._frame_queues: dict[str, queue.Queue] = {}
+        self._sweep_queues: dict[str, queue.Queue] = {}
+        self._lidar_poses: dict[str, Pose] = {}
+        self._route_lane_ids: list[str] = []
         self._events = RolloutEvents()
         self._rear_axle_offset_m = 0.0
         self._pending_control: VehicleCommand | None = None
@@ -145,6 +165,7 @@ class CarlaWorldAdapter:
         spawn_transform = self._spawn_ego()
         self._rear_axle_offset_m = self._resolve_rear_axle_offset()
         cameras = self._spawn_cameras()
+        self._spawn_lidars()
         self._spawn_collision_sensors()
         self._spawn_background_traffic()
 
@@ -305,6 +326,59 @@ class CarlaWorldAdapter:
 
         return callback
 
+    def _spawn_lidars(self) -> None:
+        carla = self._carla
+        blueprints = self._world.get_blueprint_library()
+        for lidar in self.config.lidars:
+            blueprint = blueprints.find("sensor.lidar.ray_cast")
+            blueprint.set_attribute("channels", str(lidar.channels))
+            blueprint.set_attribute("range", str(lidar.range_m))
+            blueprint.set_attribute("points_per_second", str(lidar.points_per_second))
+            # One full revolution per tick; see LidarConfig for why.
+            blueprint.set_attribute("rotation_frequency", str(1.0 / self.config.fixed_delta_s))
+            blueprint.set_attribute("upper_fov", str(lidar.upper_fov_deg))
+            blueprint.set_attribute("lower_fov", str(lidar.lower_fov_deg))
+            blueprint.set_attribute("sensor_tick", str(self.config.fixed_delta_s))
+            if blueprint.has_attribute("dropoff_general_rate"):
+                blueprint.set_attribute("dropoff_general_rate", str(lidar.dropoff_general_rate))
+
+            transform = carla.Transform(
+                carla.Location(x=lidar.x, y=lidar.y, z=lidar.z),
+                carla.Rotation(pitch=lidar.pitch_deg, yaw=lidar.yaw_deg, roll=lidar.roll_deg),
+            )
+            sensor = self._world.spawn_actor(blueprint, transform, attach_to=self._ego)
+            sweeps: queue.Queue = queue.Queue()
+            self._sweep_queues[lidar.logical_id] = sweeps
+            self._lidar_poses[lidar.logical_id] = sensor_pose_in_rig(
+                lidar.x,
+                lidar.y,
+                lidar.z,
+                lidar.pitch_deg,
+                lidar.yaw_deg,
+                lidar.roll_deg,
+                self._rear_axle_offset_m,
+            )
+            sensor.listen(self._make_lidar_callback(lidar, sweeps))
+            self._sensors.append(sensor)
+
+    def _make_lidar_callback(self, lidar: LidarConfig, sweeps: queue.Queue):
+        """Queue the raw buffer; the frame conversion runs only for the sweep sent."""
+        epoch = self.config.epoch_offset_us
+
+        def callback(measurement: Any) -> None:
+            try:
+                points = np.frombuffer(measurement.raw_data, dtype=np.float32).reshape(-1, 4)
+                sweeps.put(
+                    _RawSweep(
+                        timestamp_us=seconds_to_us(measurement.timestamp, epoch),
+                        points_xyzi=points.copy(),
+                    )
+                )
+            except Exception:  # pragma: no cover - sensor thread must not die
+                logger.exception("failed to receive a sweep from %s", lidar.logical_id)
+
+        return callback
+
     def _spawn_collision_sensors(self) -> None:
         blueprints = self._world.get_blueprint_library()
         carla = self._carla
@@ -361,6 +435,7 @@ class CarlaWorldAdapter:
 
         waypoint = self._map.get_waypoint(spawn_transform.location, project_to_road=True)
         points = [waypoint_to_local(waypoint)]
+        self._route_lane_ids = [carla_lane_key(waypoint)]
         travelled = 0.0
         while travelled < target_length_m:
             options = waypoint.next(step)
@@ -370,6 +445,9 @@ class CarlaWorldAdapter:
                 options[self._rng.randrange(len(options))] if len(options) > 1 else options[0]
             )
             points.append(waypoint_to_local(waypoint))
+            lane_id = carla_lane_key(waypoint)
+            if lane_id != self._route_lane_ids[-1]:
+                self._route_lane_ids.append(lane_id)
             travelled += step
 
         if len(points) < 2:
@@ -396,6 +474,7 @@ class CarlaWorldAdapter:
             timestamp_us=timestamp_us,
             ego=self._ego_state(timestamp_us),
             captures=self._drain_captures(),
+            lidar=self._drain_sweeps(),
         )
 
     def apply_control(self, command: VehicleCommand) -> None:
@@ -493,9 +572,32 @@ class CarlaWorldAdapter:
             )
         return captures
 
+    def _drain_sweeps(self) -> list[LidarCapture]:
+        """The newest sweep per LiDAR, in the rig frame; any backlog is stale."""
+        sweeps = []
+        for logical_id, pending in self._sweep_queues.items():
+            newest: _RawSweep | None = None
+            while True:
+                try:
+                    newest = pending.get_nowait()
+                except queue.Empty:
+                    break
+            if newest is None:
+                continue
+            pose = self._lidar_poses[logical_id]
+            sweeps.append(
+                LidarCapture(
+                    logical_id=logical_id,
+                    timestamp_us=newest.timestamp_us,
+                    pose_in_rig=pose,
+                    points_xyzi=lidar_points_to_rig(newest.points_xyzi, pose),
+                )
+            )
+        return sweeps
+
     # -- ground truth ------------------------------------------------------
 
-    def environment(self, snapshot: WorldSnapshot) -> CarlaRendererData:
+    def environment(self, snapshot: WorldSnapshot) -> RendererData:
         return self._ground_truth().read(snapshot)
 
     def _ground_truth(self) -> CarlaGroundTruth:
@@ -507,6 +609,7 @@ class CarlaWorldAdapter:
                 carla_map=self._map,
                 config=self.config,
                 map_name=self.scenario.map_name,
+                route_lane_ids=self._route_lane_ids,
             )
         return self._ground_truth_reader
 

@@ -55,14 +55,14 @@ line-length = 100
 target-version = "py311"
 # Generated protobuf modules are committed verbatim; formatting them would make
 # them differ from a fresh `compile_protos` run.
-extend-exclude = ["src/carla_driver_interface/grpc_api/carla_driver"]
+extend-exclude = ["src/carla_driver_interface/grpc_api/driver_extension"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.per-file-ignores]
 # Generated protobuf code.
-"src/carla_driver_interface/grpc_api/carla_driver/**" = ["ALL"]
+"src/carla_driver_interface/grpc_api/driver_extension/**" = ["ALL"]
 # BaseDriver's observation hooks are deliberately optional no-ops: a policy only
 # has to implement `drive`. Marking them abstract would force every policy to
 # stub out six methods it does not care about.
@@ -74,4 +74,4 @@ select = ["E", "F", "I", "UP", "B"]
 # reading. Pinning 3.11 while the venv is 3.12 makes mypy reject numpy's own
 # stubs, which use PEP 695 `type` statements.
 ignore_missing_imports = true
-exclude = "src/carla_driver_interface/grpc_api/carla_driver/"
+exclude = "src/carla_driver_interface/grpc_api/driver_extension/"

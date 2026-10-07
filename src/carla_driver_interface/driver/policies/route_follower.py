@@ -19,7 +19,7 @@ import numpy as np
 from carla_driver_interface import polyline
 from carla_driver_interface.driver.base import BaseDriver, DriveContext, DriveResult
 from carla_driver_interface.geometry import Pose, Trajectory
-from carla_driver_interface.grpc_api import CarlaRendererData, TrafficLightState
+from carla_driver_interface.grpc_api import RendererData, TrafficLightState
 
 __all__ = ["RouteFollowerPolicy"]
 
@@ -105,7 +105,7 @@ class RouteFollowerPolicy(BaseDriver):
             return math.inf
         return math.sqrt(2.0 * self.max_decel_mps2 * max(0.0, remaining))
 
-    def _traffic_light_speed(self, data: CarlaRendererData) -> float:
+    def _traffic_light_speed(self, data: RendererData) -> float:
         """Speed cap implied by the light governing the ego lane."""
         stopping = data.ego_traffic_light in (
             TrafficLightState.TRAFFIC_LIGHT_STATE_RED,

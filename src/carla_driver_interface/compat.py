@@ -13,9 +13,9 @@ from __future__ import annotations
 from carla_driver_interface import ALPASIM_GRPC_REV, __version__
 from carla_driver_interface.grpc_api import (
     API_VERSION_MESSAGE,
-    CarlaCompatReport,
     CompatEntry,
     CompatLevel,
+    CompatReport,
     describe_api_mismatch,
 )
 
@@ -31,7 +31,7 @@ def _entry(area: str, alpasim: str, carla: str, level: CompatLevel, *symbols: st
     return CompatEntry(
         area=area,
         alpasim_behaviour=alpasim,
-        carla_behaviour=carla,
+        implementation_behaviour=carla,
         level=level,
         symbols=list(symbols),
     )
@@ -180,17 +180,36 @@ COMPAT_ENTRIES: tuple[CompatEntry, ...] = (
     ),
     # -- extension ------------------------------------------------------
     _entry(
+        "LiDAR",
+        "SensorsimService.render_lidar produces point clouds, but the egodriver "
+        "contract has no LiDAR submission RPC to deliver them to a driver",
+        "Opt-in (RuntimeConfig.lidars): one full sweep per configured sensor rides in "
+        "RendererData.lidar as rig-frame float32 x, y, z, intensity",
+        CompatLevel.COMPAT_LEVEL_EXTENSION,
+        "driver_extension.v0.LidarSweep",
+    ),
+    _entry(
+        "Lane map",
+        "No vector map reaches the driver; alpasim drivers read the route only",
+        "Opt-in (RuntimeConfig.send_lanes): the lanes within lane_horizon_m ride in "
+        "RendererData.lanes as rig-frame centreline and boundaries, with markings, "
+        "the governing light, the posted limit and the position along the route",
+        CompatLevel.COMPAT_LEVEL_EXTENSION,
+        "driver_extension.v0.Lane",
+    ),
+    _entry(
         "Renderer payload",
         "DriveRequest.renderer_data is free-form and NRE-specific",
-        "Carries a serialized carla_driver.v0.CarlaRendererData (map, weather, "
-        "traffic light, speed limit, actors). Drivers that ignore it are unaffected",
+        "Carries a serialized driver_extension.v0.RendererData (map, weather, "
+        "traffic light, speed limit, actors, and opt-in lanes and LiDAR). Drivers "
+        "that ignore it are unaffected",
         CompatLevel.COMPAT_LEVEL_EXTENSION,
         "egodriver.DriveRequest.renderer_data",
     ),
     _entry(
         "Driver debug payload",
         "DebugInfo.unstructured_debug_info is free-form",
-        "Carries a serialized carla_driver.v0.CarlaDriveDebugInfo",
+        "Carries a serialized driver_extension.v0.DriveDebugInfo",
         CompatLevel.COMPAT_LEVEL_EXTENSION,
         "egodriver.DriveResponse.DebugInfo",
     ),
@@ -210,14 +229,6 @@ COMPAT_ENTRIES: tuple[CompatEntry, ...] = (
         "video_model",
     ),
     _entry(
-        "LiDAR",
-        "SensorsimService.render_lidar produces point clouds",
-        "Not implemented -- the egodriver contract has no LiDAR submission RPC, "
-        "so there is nowhere to deliver it",
-        CompatLevel.COMPAT_LEVEL_UNIMPLEMENTED,
-        "nre.grpc.protos.sensorsim.LidarRenderRequest",
-    ),
-    _entry(
         "Runtime gRPC surface",
         "RuntimeService.simulate / prefetch_scene / get_runtime_info / shut_down",
         "Not served; CarlaRuntime is used as a Python class",
@@ -227,10 +238,10 @@ COMPAT_ENTRIES: tuple[CompatEntry, ...] = (
 )
 
 
-def build_report() -> CarlaCompatReport:
+def build_report() -> CompatReport:
     """The difference list as a protobuf message."""
-    return CarlaCompatReport(
-        carla_driver_interface_version=__version__,
+    return CompatReport(
+        implementation_version=__version__,
         alpasim_grpc_rev=ALPASIM_GRPC_REV,
         alpasim_grpc_api_version=API_VERSION_MESSAGE,
         entries=list(COMPAT_ENTRIES),
@@ -247,12 +258,12 @@ _LEVEL_LABELS = {
 }
 
 
-def format_report(report: CarlaCompatReport | None = None) -> str:
+def format_report(report: CompatReport | None = None) -> str:
     """Render the report for a terminal, grouped by compatibility level."""
     report = report or build_report()
     api = report.alpasim_grpc_api_version
     lines = [
-        f"carla_driver_interface {report.carla_driver_interface_version}",
+        f"carla_driver_interface {report.implementation_version}",
         f"alpasim rev           {report.alpasim_grpc_rev}",
         f"alpasim_grpc API      {api.major}.{api.minor}.{api.patch}",
         "",
@@ -272,7 +283,7 @@ def format_report(report: CarlaCompatReport | None = None) -> str:
         for entry in entries:
             lines.append(f"  {entry.area}")
             lines.append(f"    alpasim: {entry.alpasim_behaviour}")
-            lines.append(f"    carla  : {entry.carla_behaviour}")
+            lines.append(f"    impl   : {entry.implementation_behaviour}")
             if entry.symbols:
                 lines.append(f"    protos : {', '.join(entry.symbols)}")
         lines.append("")

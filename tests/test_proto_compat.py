@@ -21,12 +21,12 @@ from carla_driver_interface.driver.service import CarlaEgodriverServicer
 from carla_driver_interface.grpc_api import (
     API_VERSION_MESSAGE,
     EGODRIVER_SERVICE_FULL_NAME,
-    CarlaDriveSessionInfo,
-    CarlaRendererData,
     CompatLevel,
     DriveRequest,
+    DriveSessionInfo,
     DriveSessionRequest,
     EgodriverServiceServicer,
+    RendererData,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -105,17 +105,17 @@ def test_upstream_field_numbers(message, field, number):
 
 
 def test_extension_messages_compose_upstream_types_rather_than_copying_them():
-    info = CarlaDriveSessionInfo()
+    info = DriveSessionInfo()
     # `base` must be the upstream message class itself, so the two can never
     # drift apart the way a hand-copied definition would.
     assert type(info.base) is DriveSessionRequest
 
 
 def test_extension_payload_round_trips_through_the_upstream_bytes_field():
-    data = CarlaRendererData(map_name="Town10HD_Opt", speed_limit_mps=13.9)
+    data = RendererData(map_name="Town10HD_Opt", speed_limit_mps=13.9)
     request = DriveRequest(session_uuid="s", renderer_data=data.SerializeToString())
 
-    decoded = CarlaRendererData()
+    decoded = RendererData()
     decoded.ParseFromString(request.renderer_data)
     assert decoded.map_name == "Town10HD_Opt"
     assert decoded.speed_limit_mps == pytest.approx(13.9)
@@ -127,9 +127,9 @@ def test_our_proto_declares_no_service():
     Adding a service here would create a second, incompatible way to talk to a
     driver. Extensions ride inside the upstream ``bytes`` fields instead.
     """
-    from carla_driver_interface.grpc_api.carla_driver.v0 import carla_driver_pb2
+    from carla_driver_interface.grpc_api.driver_extension.v0 import driver_extension_pb2
 
-    assert not carla_driver_pb2.DESCRIPTOR.services_by_name
+    assert not driver_extension_pb2.DESCRIPTOR.services_by_name
 
 
 def test_api_version_is_forwarded_not_invented():
@@ -150,7 +150,7 @@ def test_compat_report_covers_every_level_and_is_populated():
     assert CompatLevel.COMPAT_LEVEL_UNSPECIFIED not in levels
 
     for entry in COMPAT_ENTRIES:
-        assert entry.area and entry.alpasim_behaviour and entry.carla_behaviour
+        assert entry.area and entry.alpasim_behaviour and entry.implementation_behaviour
 
 
 def test_compat_entries_are_mirrored_in_the_docs():
@@ -184,7 +184,7 @@ def test_generated_protos_are_up_to_date(tmp_path):
 
     module.compile_protos(tmp_path)
 
-    relative = Path("carla_driver") / "v0"
+    relative = Path("driver_extension") / "v0"
 
     def sources(root: Path) -> list[str]:
         return sorted(p.name for p in (root / relative).iterdir() if p.is_file())

@@ -41,6 +41,7 @@ from carla_driver_interface.grpc_api import (
     Empty,
     GroundTruth,
     GroundTruthRequest,
+    RendererData,
     RolloutCameraImage,
     RolloutEgoTrajectory,
     RolloutErrorCode,
@@ -51,7 +52,11 @@ from carla_driver_interface.grpc_api import (
     channel_options,
     describe_api_mismatch,
 )
-from carla_driver_interface.grpc_api.extension import pack_renderer_data, unpack_debug_info
+from carla_driver_interface.grpc_api.extension import (
+    pack_lidar_sweep,
+    pack_renderer_data,
+    unpack_debug_info,
+)
 from carla_driver_interface.runtime.config import RuntimeConfig, ScenarioSpec
 from carla_driver_interface.runtime.control import TrajectoryFollower, VehicleCommand
 from carla_driver_interface.runtime.metrics import MetricsCollector
@@ -259,7 +264,7 @@ class CarlaRuntime:
                     session_uuid=session_uuid,
                     time_now_us=step_start_us,
                     time_query_us=target_time_us,
-                    renderer_data=pack_renderer_data(self.world.environment(snapshot)),
+                    renderer_data=pack_renderer_data(self._renderer_data(snapshot)),
                 ),
                 timeout=self.config.driver_timeout_s,
             )
@@ -291,6 +296,25 @@ class CarlaRuntime:
                 return steps, False
 
         return steps, False
+
+    def _renderer_data(self, snapshot: WorldSnapshot) -> RendererData:
+        """The adapter's ground truth, plus the sweeps the tick produced.
+
+        The sweeps are attached here rather than by each adapter: they arrive
+        with the snapshot like the camera frames do, so the packing is one
+        thing every adapter shares instead of one more each must remember.
+        """
+        data = self.world.environment(snapshot)
+        for sweep in snapshot.lidar:
+            data.lidar.append(
+                pack_lidar_sweep(
+                    sweep.logical_id,
+                    sweep.timestamp_us,
+                    sweep.points_xyzi,
+                    sweep.pose_in_rig.to_proto(),
+                )
+            )
+        return data
 
     def _advance(self, command: VehicleCommand) -> None:
         """Apply actuation and run the simulator up to the next policy step."""

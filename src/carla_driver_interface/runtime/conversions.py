@@ -49,9 +49,11 @@ __all__ = [
     "carla_rotation_to_quat_xyzw",
     "carla_transform_to_pose",
     "carla_vector_to_local",
+    "lidar_points_to_rig",
     "pinhole_camera_spec",
     "rig_pose_from_actor_transform",
     "seconds_to_us",
+    "sensor_pose_in_rig",
     "vector_local_to_rig",
 ]
 
@@ -125,6 +127,42 @@ def rig_pose_from_actor_transform(
     return carla_transform_to_pose(location, rotation_pyr_deg) @ rig_offset_pose(rear_axle_offset_m)
 
 
+def sensor_pose_in_rig(
+    x: float,
+    y: float,
+    z: float,
+    pitch_deg: float,
+    yaw_deg: float,
+    roll_deg: float,
+    rear_axle_offset_m: float,
+) -> Pose:
+    """Any sensor's CARLA-side mount transform, expressed in the rig frame.
+
+    The arguments are exactly a ``carla.Transform``'s components relative to the
+    vehicle actor -- left-handed, degrees. Cameras and LiDARs both go through
+    here, so a mount cannot be honoured for one and dropped for the other.
+    """
+    pose_actor_to_sensor = carla_transform_to_pose((x, y, z), (pitch_deg, yaw_deg, roll_deg))
+    return rig_offset_pose(rear_axle_offset_m).inverse() @ pose_actor_to_sensor
+
+
+def lidar_points_to_rig(points_xyzi_in_sensor: np.ndarray, pose_in_rig: Pose) -> np.ndarray:
+    """A raw ``sensor.lidar.ray_cast`` buffer -> ``[N, 4]`` rig-frame points.
+
+    CARLA reports the points in the sensor's own frame, which is left-handed
+    like the rest of CARLA: mirroring y makes them right-handed in the sensor
+    frame, and the mount (already mirrored by :func:`sensor_pose_in_rig`) then
+    carries them into the rig. Intensity passes through untouched.
+    """
+    raw = np.asarray(points_xyzi_in_sensor, dtype=np.float32).reshape(-1, 4)
+    xyz = raw[:, :3].astype(np.float64)
+    xyz[:, 1] = -xyz[:, 1]
+    out = np.empty_like(raw)
+    out[:, :3] = pose_in_rig.transform_points(xyz) if len(xyz) else xyz
+    out[:, 3] = raw[:, 3]
+    return out
+
+
 def camera_pose_in_rig(
     x: float,
     y: float,
@@ -144,8 +182,7 @@ def camera_pose_in_rig(
     rotation gets dropped: a ``-y`` on the position alone looks right for a
     forward camera and silently turns a side camera into a forward one.
     """
-    pose_actor_to_camera = carla_transform_to_pose((x, y, z), (pitch_deg, yaw_deg, roll_deg))
-    return rig_offset_pose(rear_axle_offset_m).inverse() @ pose_actor_to_camera
+    return sensor_pose_in_rig(x, y, z, pitch_deg, yaw_deg, roll_deg, rear_axle_offset_m)
 
 
 def vector_local_to_rig(vector_local: np.ndarray, pose_local_to_rig: Pose) -> np.ndarray:

@@ -133,6 +133,7 @@ see [COMPATIBILITY.md](COMPATIBILITY.md#the-coordinate-conversion-in-detail).
 | `runtime/world.py` | Simulator abstraction: protocol and dataclasses only | `alpasim_runtime.services.*` |
 | `runtime/carla_world.py` | The CARLA implementation of it | `alpasim_runtime.services.*` |
 | `runtime/control.py` | Trajectory tracking | `controller.VDCService` |
+| `runtime/lanes.py` | Lane geometry, cropped into the rig frame; the CARLA map reader | (none) |
 | `runtime/route.py` | Route generation and slicing | `alpasim_runtime.route_generator` |
 | `runtime/metrics.py` | Scoring | `alpasim_eval` |
 | `compat.py` | Machine-readable definition of the differences | (none) |

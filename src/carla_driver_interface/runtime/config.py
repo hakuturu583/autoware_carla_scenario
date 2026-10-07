@@ -9,7 +9,14 @@ from carla_driver_interface.grpc_api import ImageFormat
 from carla_driver_interface.runtime.control import ControlConfig
 from carla_driver_interface.runtime.images import validate_image_format
 
-__all__ = ["CameraConfig", "RuntimeConfig", "ScenarioSpec", "default_camera_rig"]
+__all__ = [
+    "CameraConfig",
+    "LidarConfig",
+    "RuntimeConfig",
+    "ScenarioSpec",
+    "default_camera_rig",
+    "default_lidar",
+]
 
 
 @dataclass(frozen=True)
@@ -42,6 +49,52 @@ def default_camera_rig() -> list[CameraConfig]:
     upstream rig configs find the camera they expect.
     """
     return [CameraConfig(logical_id="camera_front_wide_120fov")]
+
+
+@dataclass(frozen=True)
+class LidarConfig:
+    """One ``sensor.lidar.ray_cast`` mounted on the ego.
+
+    The mount follows :class:`CameraConfig`: a CARLA-side transform relative to
+    the vehicle actor, left-handed and in degrees. The remaining fields are the
+    blueprint attributes of the same names.
+
+    The sensor's rotation frequency is not configurable: it is pinned to one
+    revolution per simulator tick (``1 / fixed_delta_s``), so every sweep the
+    driver receives covers the full 360 degrees. Left at CARLA's default, a
+    sweep would be whatever arc the beam happened to cover during one tick,
+    and a policy trained on whole sweeps would see a pie slice. Each sweep
+    therefore holds about ``points_per_second * fixed_delta_s`` points.
+    """
+
+    logical_id: str = "lidar_top"
+    channels: int = 64
+    range_m: float = 100.0
+    points_per_second: int = 1_200_000
+    upper_fov_deg: float = 15.0
+    lower_fov_deg: float = -25.0
+    #: CARLA drops this fraction of points at random by default (0.45). A
+    #: policy expecting a real sensor's density wants none of that.
+    dropoff_general_rate: float = 0.0
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 2.0
+    pitch_deg: float = 0.0
+    yaw_deg: float = 0.0
+    roll_deg: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.channels < 1:
+            raise ValueError("LiDAR channels must be positive")
+        if self.range_m <= 0.0 or self.points_per_second <= 0:
+            raise ValueError("LiDAR range and points_per_second must be positive")
+        if self.lower_fov_deg >= self.upper_fov_deg:
+            raise ValueError("LiDAR lower_fov_deg must be below upper_fov_deg")
+
+
+def default_lidar() -> LidarConfig:
+    """A roof-mounted spinning LiDAR, the shape a T4/nuScenes rig carries."""
+    return LidarConfig()
 
 
 @dataclass(frozen=True)
@@ -106,6 +159,9 @@ class RuntimeConfig:
     cameras: list[CameraConfig] = field(default_factory=default_camera_rig)
     image_format: int = ImageFormat.JPEG
     image_quality: int = 90
+    #: LiDARs to mount. Empty by default: a sweep is megabytes per policy step
+    #: and most policies read none. See ``RendererData.lidar``.
+    lidars: list[LidarConfig] = field(default_factory=list)
 
     # -- route --
     #: How far ahead of the ego the route is published, in metres.
@@ -139,7 +195,7 @@ class RuntimeConfig:
     #: radians. 0 makes ``rig_est`` identical to ``rig``.
     egomotion_position_noise_m: float = 0.0
     egomotion_yaw_noise_rad: float = 0.0
-    #: Include other actors in the ``CarlaRendererData`` extension payload.
+    #: Include other actors in the ``RendererData`` extension payload.
     send_actor_ground_truth: bool = True
     #: How far from the ego an actor is still reported, in metres.
     #:
@@ -152,6 +208,15 @@ class RuntimeConfig:
     #: Lower it to bound the payload on maps with dense traffic; the cost of
     #: doing so is paid in what the policy stops being able to see.
     actor_horizon_m: float = 150.0
+    #: Send the drivable lanes around the ego in ``RendererData.lanes``.
+    #: Off by default for the same reason as the LiDAR: only a map-conditioned
+    #: policy reads them.
+    send_lanes: bool = False
+    #: How far from the ego a lane point is still sent, in metres. A lane
+    #: crossing the boundary is cropped to its contiguous run inside it.
+    lane_horizon_m: float = 100.0
+    #: Station spacing of the lane polylines, in metres.
+    lane_resolution_m: float = 2.0
 
     # -- control --
     control: ControlConfig = field(default_factory=ControlConfig)
@@ -165,6 +230,11 @@ class RuntimeConfig:
         validate_image_format(self.image_format)
         if self.fixed_delta_s <= 0.0:
             raise ValueError("fixed_delta_s must be positive")
+        if self.lane_horizon_m <= 0.0 or self.lane_resolution_m <= 0.0:
+            raise ValueError("lane_horizon_m and lane_resolution_m must be positive")
+        ids = [lidar.logical_id for lidar in self.lidars]
+        if len(set(ids)) != len(ids):
+            raise ValueError(f"LiDAR logical ids must be unique, got {ids}")
         ratio = self.policy_timestep_s / self.fixed_delta_s
         if abs(ratio - round(ratio)) > 1e-9 or round(ratio) < 1:
             raise ValueError(

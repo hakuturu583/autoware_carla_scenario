@@ -154,6 +154,31 @@ class MyPolicy(BaseDriver):
 run_server(MyPolicy(), port=50051)
 ```
 
+### LiDAR and the lane map
+
+The egodriver contract carries camera images, egomotion and a route, and
+nothing else. A policy that also needs a point cloud or a vector map gets them
+through the same extension point as the rest of the ground truth,
+`DriveRequest.renderer_data`, once the runtime is asked to send them:
+
+```console
+$ uv run carla-driver-interface run ... --lidar --lanes --lane-horizon 100
+```
+
+```python
+def drive(self, ctx: DriveContext) -> DriveResult:
+    points = ctx.lidar_points()  # (N, 4) float32 x, y, z, intensity; rig frame
+    for lane in ctx.lanes():  # nearest first, rig frame
+        centre, left, right = lane_polylines(lane)  # grpc_api.extension
+        on_route = lane.route_index >= 0
+```
+
+Both are off by default: a sweep is megabytes per step and only a policy that
+reads it should pay for it. Both arrive in the rig frame, so a policy never
+handles CARLA's left-handed conventions. The message names
+(`driver_extension.v0.RendererData`, `Lane`, `LidarSweep`) say what is
+carried, not which simulator produced it.
+
 This driver can be **called by an alpasim runtime as-is**, and conversely
 `CarlaRuntime` can drive alpasim's own `alpasim_driver` (just point `--driver`
 at it). For the caveats, see

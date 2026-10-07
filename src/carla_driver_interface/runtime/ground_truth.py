@@ -3,7 +3,7 @@
 
 The alpasim contract has no field for a traffic light and none for the traffic
 around the ego. Both ride inside ``DriveRequest.renderer_data`` as a
-``carla_driver.v0.CarlaRendererData``, and everything that fills that message
+``driver_extension.v0.RendererData``, and everything that fills that message
 lives here.
 
 Standalone, rather than a part of :class:`CarlaWorldAdapter`, because gathering
@@ -26,16 +26,24 @@ import numpy as np
 from carla_driver_interface.geometry import dynamic_state_proto
 from carla_driver_interface.grpc_api import (
     AABB,
-    CarlaActorState,
-    CarlaRendererData,
-    CarlaWeather,
+    ActorState,
+    Lane,
+    RendererData,
     TrafficLightState,
+    Weather,
 )
 from carla_driver_interface.runtime.config import RuntimeConfig
 from carla_driver_interface.runtime.conversions import (
     carla_transform_to_pose,
     carla_vector_to_local,
     waypoint_to_local,
+)
+from carla_driver_interface.runtime.lanes import (
+    LaneGeometry,
+    carla_lane_geometries,
+    carla_lane_key,
+    lanes_in_rig,
+    route_lane_order,
 )
 from carla_driver_interface.runtime.world import EgoState, WorldSnapshot
 
@@ -56,6 +64,10 @@ _STOP_LINE_STEP_M = 0.5
 #: zero-extent obstacle wherever CARLA happens to keep it.
 _ACTOR_PATTERNS = ("*vehicle*", "walker.pedestrian.*")
 
+#: OpenDRIVE signal type of a maximum-speed sign (German StVO 274, which
+#: OpenDRIVE and CARLA's towns use as the generic code).
+_SPEED_LIMIT_SIGNAL_TYPE = "274"
+
 
 class CarlaGroundTruth:
     """Reads the CARLA ground truth for one ego.
@@ -72,6 +84,9 @@ class CarlaGroundTruth:
         config: Supplies the sight distance, the actor horizon and the lane-walk
             step.
         map_name: Reported to the policy as the scene it is driving.
+        route_lane_ids: ``Lane.lane_id`` of each lane the ego's route visits,
+            in order. Sets ``Lane.route_index``; without it every lane is
+            reported as off the route.
     """
 
     def __init__(
@@ -81,6 +96,7 @@ class CarlaGroundTruth:
         carla_map: Any,
         config: RuntimeConfig,
         map_name: str,
+        route_lane_ids: list[str] | None = None,
     ) -> None:
         self._world = world
         self._ego = ego
@@ -91,10 +107,13 @@ class CarlaGroundTruth:
         self._stop_lines: dict[tuple[int, int], list[Any]] | None = None
         #: Light id -> where to stop for it, in the local frame. Same reason.
         self._stop_line_points_by_light: dict[int, list[np.ndarray]] = {}
+        self._route_order = route_lane_order(route_lane_ids or [])
+        self._lane_geometries: list[LaneGeometry] | None = None
+        self._lights_by_lane_id: dict[str, list[Any]] | None = None
 
-    def read(self, snapshot: WorldSnapshot) -> CarlaRendererData:
+    def read(self, snapshot: WorldSnapshot) -> RendererData:
         light = self._governing_traffic_light()
-        return CarlaRendererData(
+        return RendererData(
             snapshot_timestamp_us=snapshot.timestamp_us,
             frame_id=snapshot.frame_id,
             map_name=self._map_name,
@@ -103,7 +122,65 @@ class CarlaGroundTruth:
             ego_traffic_light_distance_m=self._traffic_light_distance(light, snapshot.ego),
             speed_limit_mps=self._speed_limit_mps(),
             actors=self._actor_states(snapshot.ego) if self.config.send_actor_ground_truth else [],
+            lanes=self._lanes(snapshot.ego) if self.config.send_lanes else [],
         )
+
+    def _lanes(self, ego: EgoState) -> list[Lane]:
+        """The lanes around the ego, with the light that governs each.
+
+        The geometry is read from the map once -- it does not move -- and only
+        the crop and the frame change per step.
+        """
+        if self._lane_geometries is None:
+            limits = self._speed_limits_by_road()
+            self._lane_geometries = carla_lane_geometries(
+                self._map,
+                self.config.lane_resolution_m,
+                speed_limit_for=lambda wp: limits.get(int(wp.road_id), 0.0),
+            )
+        lights = {
+            lane_id: self._traffic_light_state(governing[0])
+            for lane_id, governing in self._lights_by_lane().items()
+        }
+        return lanes_in_rig(
+            self._lane_geometries,
+            ego.pose_local_to_rig,
+            self.config.lane_horizon_m,
+            route_order=self._route_order,
+            traffic_lights=lights,
+        )
+
+    def _lights_by_lane(self) -> dict[str, list[Any]]:
+        """Which light's stop line lies on which lane, by ``Lane.lane_id``."""
+        if self._lights_by_lane_id is None:
+            index: dict[str, list[Any]] = {}
+            for light in self._world.get_actors().filter("traffic.traffic_light*"):
+                for waypoint in light.get_stop_waypoints():
+                    index.setdefault(carla_lane_key(waypoint), []).append(light)
+            self._lights_by_lane_id = index
+        return self._lights_by_lane_id
+
+    def _speed_limits_by_road(self) -> dict[int, float]:
+        """Posted limits by road id, in m/s, from the map's speed signs.
+
+        Per road rather than per lane because that is the granularity the
+        signs are placed at; a road with two different signs keeps the lower,
+        which is the one a lane-level reading could not contradict.
+        """
+        try:
+            landmarks = self._map.get_all_landmarks_of_type(_SPEED_LIMIT_SIGNAL_TYPE)
+        except (AttributeError, RuntimeError):  # pragma: no cover - build dependent
+            return {}
+        limits: dict[int, float] = {}
+        for landmark in landmarks:
+            value = float(getattr(landmark, "value", 0.0) or 0.0)
+            if value <= 0.0:
+                continue
+            unit = str(getattr(landmark, "unit", "km/h")).lower()
+            mps = value * 0.44704 if "mph" in unit else value / 3.6
+            road = int(landmark.road_id)
+            limits[road] = min(limits.get(road, mps), mps)
+        return limits
 
     def _governing_traffic_light(self) -> Any:
         """The light the ego must obey, found by looking down its own lane.
@@ -216,14 +293,14 @@ class CarlaGroundTruth:
             self._stop_lines = index
         return self._stop_lines
 
-    def _weather(self) -> CarlaWeather:
+    def _weather(self) -> Weather:
         weather = self._world.get_weather()
 
         # 0.10.x dropped some 0.9.x weather fields; read defensively.
         def value(name: str) -> float:
             return float(getattr(weather, name, 0.0))
 
-        return CarlaWeather(
+        return Weather(
             cloudiness=value("cloudiness"),
             precipitation=value("precipitation"),
             precipitation_deposits=value("precipitation_deposits"),
@@ -260,7 +337,7 @@ class CarlaGroundTruth:
         policy does the right thing and stops.
 
         Returning a negative value here matches what the field already means
-        elsewhere: ``CarlaRendererData.ego_traffic_light_distance_m`` is
+        elsewhere: ``RendererData.ego_traffic_light_distance_m`` is
         documented as negative when no stop line applies to the ego, and once
         the line is behind, none does.
         """
@@ -340,7 +417,7 @@ class CarlaGroundTruth:
         actors = self._world.get_actors()
         return [match for pattern in _ACTOR_PATTERNS for match in actors.filter(pattern)]
 
-    def _actor_states(self, ego: EgoState) -> list[CarlaActorState]:
+    def _actor_states(self, ego: EgoState) -> list[ActorState]:
         states = []
         ego_position = ego.pose_local_to_rig.position
         for actor in self._reportable_actors():
@@ -358,7 +435,7 @@ class CarlaGroundTruth:
             velocity = actor.get_velocity()
             extent = actor.bounding_box.extent
             states.append(
-                CarlaActorState(
+                ActorState(
                     track_id=str(actor.id),
                     type_id=actor.type_id,
                     pose_local_to_aabb=pose.to_proto(),

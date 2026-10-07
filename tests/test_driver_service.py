@@ -13,13 +13,13 @@ from carla_driver_interface.driver.base import BaseDriver, DriveContext, DriveRe
 from carla_driver_interface.driver.policies import RouteFollowerPolicy
 from carla_driver_interface.geometry import Pose, Trajectory, dynamic_state_proto
 from carla_driver_interface.grpc_api import (
-    CarlaDriveDebugInfo,
-    CarlaRendererData,
+    DriveDebugInfo,
     DriveRequest,
     DriveSessionCloseRequest,
     DriveSessionRequest,
     EgodriverServiceStub,
     Empty,
+    RendererData,
     RolloutCameraImage,
     RolloutEgoTrajectory,
     Route,
@@ -178,7 +178,7 @@ def test_debug_info_carries_the_carla_extension(driver_stub):
     response = driver_stub.drive(
         DriveRequest(session_uuid="s0", time_now_us=0, time_query_us=100_000)
     )
-    debug = CarlaDriveDebugInfo()
+    debug = DriveDebugInfo()
     debug.ParseFromString(response.debug_info.unstructured_debug_info)
     assert debug.policy_name == "constant_speed"
     assert debug.inference_seconds >= 0.0
@@ -273,12 +273,12 @@ def test_route_follower_brakes_for_a_red_light(driver_stub):
         return float(Trajectory.from_proto(response.trajectory).poses[-1].position[0])
 
     green = plan_length(
-        CarlaRendererData(
+        RendererData(
             ego_traffic_light=TrafficLightState.TRAFFIC_LIGHT_STATE_GREEN
         ).SerializeToString()
     )
     red = plan_length(
-        CarlaRendererData(
+        RendererData(
             ego_traffic_light=TrafficLightState.TRAFFIC_LIGHT_STATE_RED,
             ego_traffic_light_distance_m=8.0,
         ).SerializeToString()
@@ -294,7 +294,7 @@ def test_route_follower_holds_without_a_route(driver_stub):
     response = driver_stub.drive(
         DriveRequest(session_uuid="s0", time_now_us=0, time_query_us=100_000)
     )
-    debug = CarlaDriveDebugInfo()
+    debug = DriveDebugInfo()
     debug.ParseFromString(response.debug_info.unstructured_debug_info)
     assert debug.scalars["reason_no_route"] == 1.0
 

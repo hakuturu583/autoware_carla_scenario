@@ -16,6 +16,7 @@ from carla_driver_interface.runtime.config import (
     RuntimeConfig,
     ScenarioSpec,
     default_camera_rig,
+    default_lidar,
 )
 from carla_driver_interface.runtime.images import parse_image_format
 
@@ -102,6 +103,22 @@ def _add_common_rollout_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--fixed-delta", type=float, default=0.05, help="seconds per tick")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--image-format", default="jpeg", help="png or jpeg (default: jpeg)")
+    parser.add_argument(
+        "--lidar",
+        action="store_true",
+        help="mount the default roof LiDAR and send its sweeps in RendererData.lidar",
+    )
+    parser.add_argument(
+        "--lanes",
+        action="store_true",
+        help="send the lanes around the ego in RendererData.lanes",
+    )
+    parser.add_argument(
+        "--lane-horizon",
+        type=float,
+        default=100.0,
+        help="metres from the ego within which lanes are sent (with --lanes)",
+    )
     parser.add_argument(
         "--metrics-json",
         default=None,
@@ -203,6 +220,9 @@ def _base_config(args: argparse.Namespace) -> RuntimeConfig:
         fixed_delta_s=args.fixed_delta,
         seed=args.seed,
         image_format=parse_image_format(args.image_format),
+        lidars=[default_lidar()] if args.lidar else [],
+        send_lanes=args.lanes,
+        lane_horizon_m=args.lane_horizon,
     )
 
 

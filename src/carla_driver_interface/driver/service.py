@@ -31,7 +31,7 @@ from carla_driver_interface.driver.base import (
 from carla_driver_interface.geometry import Pose, Trajectory
 from carla_driver_interface.grpc_api import (
     API_VERSION_MESSAGE,
-    CarlaDriveDebugInfo,
+    DriveDebugInfo,
     DriveRequest,
     DriveResponse,
     DriveSessionCloseRequest,
@@ -240,7 +240,7 @@ class CarlaEgodriverServicer(EgodriverServiceServicer):
                 for traj in result.sampled_trajectories_in_rig
             ]
 
-        debug = CarlaDriveDebugInfo(
+        debug = DriveDebugInfo(
             policy_name=self._driver.name,
             inference_seconds=elapsed,
             scalars=result.debug_scalars,

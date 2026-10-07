@@ -18,24 +18,42 @@ import math
 import numpy as np
 
 from carla_driver_interface.geometry import Pose
-from carla_driver_interface.grpc_api import CarlaRendererData, CarlaWeather, TrafficLightState
-from carla_driver_interface.runtime.config import RuntimeConfig, ScenarioSpec
+from carla_driver_interface.grpc_api import (
+    LaneMarkingType,
+    RendererData,
+    TrafficLightState,
+    Weather,
+)
+from carla_driver_interface.runtime.config import LidarConfig, RuntimeConfig, ScenarioSpec
 from carla_driver_interface.runtime.control import VehicleCommand
 from carla_driver_interface.runtime.conversions import (
     available_camera,
     camera_pose_in_rig,
+    lidar_points_to_rig,
     seconds_to_us,
+    sensor_pose_in_rig,
 )
 from carla_driver_interface.runtime.images import encode_rgb
+from carla_driver_interface.runtime.lanes import LaneGeometry, lanes_in_rig, route_lane_order
 from carla_driver_interface.runtime.world import (
     CameraCapture,
     EgoState,
+    LidarCapture,
     RolloutEvents,
     WorldSetup,
     WorldSnapshot,
 )
 
-__all__ = ["FakeWorld", "straight_then_curve_route"]
+__all__ = ["FakeWorld", "offset_polyline", "straight_then_curve_route"]
+
+#: Lane width of the fake road, in metres.
+FAKE_LANE_WIDTH_M = 3.5
+#: The route's own lane, and the one beside it on the right.
+FAKE_ROUTE_LANE_ID = "fake:0:-1"
+FAKE_NEIGHBOUR_LANE_ID = "fake:0:-2"
+#: Azimuth samples per channel in a synthetic sweep. Bounded so CI stays fast
+#: whatever ``points_per_second`` a test configures.
+_FAKE_LIDAR_MAX_AZIMUTHS = 360
 
 
 def straight_then_curve_route(
@@ -57,6 +75,17 @@ def straight_then_curve_route(
         theta = turn_rad * i / n_arc
         points.append(centre + radius_m * np.array([math.sin(theta), -math.cos(theta), 0.0]))
     return np.stack(points)
+
+
+def offset_polyline(points: np.ndarray, offset_m: float) -> np.ndarray:
+    """Shift a polyline sideways, positive to the left of its direction."""
+    points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    tangent = np.gradient(points[:, :2], axis=0)
+    tangent /= np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
+    left = np.stack([-tangent[:, 1], tangent[:, 0]], axis=1)
+    shifted = points.copy()
+    shifted[:, :2] += offset_m * left
+    return shifted
 
 
 class FakeWorld:
@@ -100,6 +129,13 @@ class FakeWorld:
         self._events = RolloutEvents()
         #: Every ego state produced so far; tests assert on the driven path.
         self.history: list[EgoState] = []
+        self._lanes = self._build_lanes()
+        self._lidar_poses = {
+            lidar.logical_id: sensor_pose_in_rig(
+                lidar.x, lidar.y, lidar.z, lidar.pitch_deg, lidar.yaw_deg, lidar.roll_deg, 0.0
+            )
+            for lidar in config.lidars
+        }
 
     # -- WorldAdapter ------------------------------------------------------
 
@@ -146,17 +182,28 @@ class FakeWorld:
             timestamp_us=timestamp_us,
             ego=ego,
             captures=self._captures(timestamp_us),
+            lidar=[self._sweep(lidar, timestamp_us) for lidar in self.config.lidars],
         )
 
-    def environment(self, snapshot: WorldSnapshot) -> CarlaRendererData:
-        return CarlaRendererData(
+    def environment(self, snapshot: WorldSnapshot) -> RendererData:
+        return RendererData(
             snapshot_timestamp_us=snapshot.timestamp_us,
             frame_id=snapshot.frame_id,
             map_name=self.scenario.map_name,
-            weather=CarlaWeather(sun_altitude_angle=45.0),
+            weather=Weather(sun_altitude_angle=45.0),
             ego_traffic_light=TrafficLightState.TRAFFIC_LIGHT_STATE_NONE,
             ego_traffic_light_distance_m=-1.0,
             speed_limit_mps=self.max_speed_mps,
+            lanes=(
+                lanes_in_rig(
+                    self._lanes,
+                    snapshot.ego.pose_local_to_rig,
+                    self.config.lane_horizon_m,
+                    route_order=route_lane_order([FAKE_ROUTE_LANE_ID]),
+                )
+                if self.config.send_lanes
+                else []
+            ),
         )
 
     def events(self) -> RolloutEvents:
@@ -227,3 +274,76 @@ class FakeWorld:
                 )
             )
         return captures
+
+    # -- map and LiDAR -----------------------------------------------------
+
+    def _build_lanes(self) -> list[LaneGeometry]:
+        """The route's lane and a same-direction neighbour on its right."""
+        half = 0.5 * FAKE_LANE_WIDTH_M
+        speed = self.max_speed_mps
+
+        def lane(lane_id: str, centre: np.ndarray, left, right) -> LaneGeometry:
+            return LaneGeometry(
+                lane_id=lane_id,
+                centerline=centre,
+                left_boundary=offset_polyline(centre, half),
+                right_boundary=offset_polyline(centre, -half),
+                left_marking=left,
+                right_marking=right,
+                speed_limit_mps=speed,
+            )
+
+        markings = LaneMarkingType
+        return [
+            lane(
+                FAKE_ROUTE_LANE_ID,
+                self._route,
+                markings.LANE_MARKING_TYPE_SOLID,
+                markings.LANE_MARKING_TYPE_BROKEN,
+            ),
+            lane(
+                FAKE_NEIGHBOUR_LANE_ID,
+                offset_polyline(self._route, -FAKE_LANE_WIDTH_M),
+                markings.LANE_MARKING_TYPE_BROKEN,
+                markings.LANE_MARKING_TYPE_CURB,
+            ),
+        ]
+
+    def _sweep(self, lidar: LidarConfig, timestamp_us: int) -> LidarCapture:
+        """A flat-ground sweep: every downward beam that lands within range.
+
+        Generated in the rig frame, where the ground is z = 0, then expressed
+        in CARLA's left-handed sensor frame and handed to
+        :func:`lidar_points_to_rig` -- the same conversion a real sweep takes,
+        so a sign error there cannot pass here.
+        """
+        pose = self._lidar_poses[lidar.logical_id]
+        per_sweep = max(1, int(lidar.points_per_second * self.config.fixed_delta_s))
+        azimuths = int(np.clip(per_sweep // lidar.channels, 1, _FAKE_LIDAR_MAX_AZIMUTHS))
+        elevation = np.radians(
+            np.linspace(lidar.lower_fov_deg, lidar.upper_fov_deg, lidar.channels)
+        )
+        azimuth = np.linspace(0.0, 2.0 * np.pi, azimuths, endpoint=False)
+        el, az = np.meshgrid(elevation, azimuth, indexing="ij")
+        direction_sensor = np.stack(
+            [np.cos(el) * np.cos(az), np.cos(el) * np.sin(az), np.sin(el)], axis=-1
+        ).reshape(-1, 3)
+        direction_rig = direction_sensor @ pose.rotation_matrix.T
+        height = float(pose.position[2])
+        down = direction_rig[:, 2] < -1e-6
+        distance = np.full(len(direction_rig), np.inf)
+        distance[down] = height / -direction_rig[down, 2]
+        hit = distance <= lidar.range_m
+        points_rig = pose.position + direction_rig[hit] * distance[hit, None]
+
+        points_sensor = pose.inverse().transform_points(points_rig)
+        points_sensor[:, 1] = -points_sensor[:, 1]  # into CARLA's left-handed frame
+        raw = np.concatenate([points_sensor, np.full((len(points_sensor), 1), 0.5)], axis=1).astype(
+            np.float32
+        )
+        return LidarCapture(
+            logical_id=lidar.logical_id,
+            timestamp_us=timestamp_us,
+            pose_in_rig=pose,
+            points_xyzi=lidar_points_to_rig(raw, pose),
+        )

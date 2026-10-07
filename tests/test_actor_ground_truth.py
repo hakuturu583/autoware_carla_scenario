@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Which actors reach the driver as ground truth.
 
-``CarlaRendererData.actors`` is the only account a policy gets of anything
+``RendererData.actors`` is the only account a policy gets of anything
 moving that is not the ego -- the alpasim contract has no field for it -- so
 whatever is left out of here is invisible to every rule written about clearance.
 A driver reading vehicles alone satisfies "collision free" while walking through

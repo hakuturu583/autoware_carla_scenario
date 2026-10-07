@@ -11,12 +11,12 @@ from __future__ import annotations
 import pytest
 
 from carla_driver_interface.grpc_api import (
-    CarlaDriveDebugInfo,
-    CarlaRendererData,
-    CarlaWeather,
+    DriveDebugInfo,
     DriveRequest,
     DriveResponse,
+    RendererData,
     TrafficLightState,
+    Weather,
 )
 from carla_driver_interface.grpc_api.extension import (
     pack_debug_info,
@@ -27,11 +27,11 @@ from carla_driver_interface.grpc_api.extension import (
 
 
 def test_renderer_data_round_trips_through_the_upstream_field():
-    original = CarlaRendererData(
+    original = RendererData(
         snapshot_timestamp_us=123_456,
         frame_id=42,
         map_name="Town10HD_Opt",
-        weather=CarlaWeather(sun_altitude_angle=45.0, precipitation=10.0),
+        weather=Weather(sun_altitude_angle=45.0, precipitation=10.0),
         ego_traffic_light=TrafficLightState.TRAFFIC_LIGHT_STATE_RED,
         ego_traffic_light_distance_m=12.5,
         speed_limit_mps=13.9,
@@ -44,7 +44,7 @@ def test_renderer_data_round_trips_through_the_upstream_field():
 
 
 def test_debug_info_round_trips_through_the_upstream_field():
-    original = CarlaDriveDebugInfo(
+    original = DriveDebugInfo(
         policy_name="route_follower",
         inference_seconds=0.0123,
         scalars={"target_speed_mps": 8.0, "current_speed_mps": 7.25},
@@ -81,17 +81,17 @@ def test_a_foreign_payload_is_none_rather_than_an_exception(unpack):
 def test_an_all_default_message_is_indistinguishable_from_absent():
     """proto3 serialises an all-default message to zero bytes.
 
-    So "the runtime sent an empty CarlaRendererData" and "the runtime sent
+    So "the runtime sent an empty RendererData" and "the runtime sent
     nothing" arrive identically, and both unpack to ``None``. That is fine --
     a policy reading ``ctx.renderer_data`` has to handle ``None`` regardless --
     but it means the codec cannot be used to signal presence on its own.
     """
-    assert pack_renderer_data(CarlaRendererData()) == b""
-    assert unpack_renderer_data(pack_renderer_data(CarlaRendererData())) is None
+    assert pack_renderer_data(RendererData()) == b""
+    assert unpack_renderer_data(pack_renderer_data(RendererData())) is None
 
 
 def test_one_set_field_is_enough_to_survive_the_round_trip():
-    restored = unpack_renderer_data(pack_renderer_data(CarlaRendererData(frame_id=1)))
+    restored = unpack_renderer_data(pack_renderer_data(RendererData(frame_id=1)))
     assert restored is not None
     assert restored.frame_id == 1
     # Unset fields come back as proto3 defaults, not as missing attributes.

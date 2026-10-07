@@ -24,9 +24,11 @@ import numpy as np
 from carla_driver_interface.geometry import Pose, Trajectory
 from carla_driver_interface.grpc_api import (
     AvailableCamera,
-    CarlaRendererData,
     DynamicState,
+    Lane,
+    RendererData,
 )
+from carla_driver_interface.grpc_api.extension import unpack_lidar_points
 
 __all__ = ["BaseDriver", "CameraFrame", "DriveContext", "DriveResult", "SessionState"]
 
@@ -117,7 +119,32 @@ class DriveContext:
     time_query_us: int
     #: CARLA ground truth, when the runtime is this project's.  ``None`` when
     #: driven by upstream alpasim, or when the payload could not be parsed.
-    renderer_data: CarlaRendererData | None
+    renderer_data: RendererData | None
+
+    def lidar_points(self, logical_id: str | None = None) -> np.ndarray | None:
+        """One sweep as ``[N, 4]`` float32 (x, y, z, intensity) in the rig frame.
+
+        ``logical_id`` selects the LiDAR; ``None`` means the only one, and is
+        refused when there are several -- silently picking the first would make
+        which sensor a policy reads depend on the runtime's configuration
+        order. ``None`` is returned when the runtime sent no sweep at all.
+        """
+        sweeps = list(self.renderer_data.lidar) if self.renderer_data is not None else []
+        if not sweeps:
+            return None
+        if logical_id is None:
+            if len(sweeps) > 1:
+                names = sorted(sweep.logical_id for sweep in sweeps)
+                raise ValueError(f"several LiDAR sweeps arrived ({names}); name one")
+            return unpack_lidar_points(sweeps[0])
+        for sweep in sweeps:
+            if sweep.logical_id == logical_id:
+                return unpack_lidar_points(sweep)
+        return None
+
+    def lanes(self) -> list[Lane]:
+        """The lanes around the ego, nearest first; empty when none were sent."""
+        return list(self.renderer_data.lanes) if self.renderer_data is not None else []
 
 
 @dataclass
@@ -133,7 +160,7 @@ class DriveResult:
     trajectory_in_rig: Trajectory
     #: Set to end the rollout immediately (``DriveResponse.terminate_session``).
     terminate_session: bool = False
-    #: Surfaced through ``CarlaDriveDebugInfo.scalars``.
+    #: Surfaced through ``DriveDebugInfo.scalars``.
     debug_scalars: dict[str, float] = field(default_factory=dict)
     #: Alternative plans considered, in the rig frame; forwarded to
     #: ``DriveResponse.DebugInfo.sampled_trajectories`` (converted to local).
@@ -148,7 +175,7 @@ class BaseDriver(ABC):
     :class:`SessionState` already records everything a simple policy needs.
     """
 
-    #: Reported through ``get_version`` and ``CarlaDriveDebugInfo.policy_name``.
+    #: Reported through ``get_version`` and ``DriveDebugInfo.policy_name``.
     name: str = "base"
 
     #: How many frames per camera to retain in ``SessionState.frame_history``.

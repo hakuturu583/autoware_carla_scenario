@@ -31,12 +31,13 @@ from typing import Protocol, runtime_checkable
 import numpy as np
 
 from carla_driver_interface.geometry import Pose
-from carla_driver_interface.grpc_api import AvailableCamera, CarlaRendererData
+from carla_driver_interface.grpc_api import AvailableCamera, RendererData
 from carla_driver_interface.runtime.control import VehicleCommand
 
 __all__ = [
     "CameraCapture",
     "EgoState",
+    "LidarCapture",
     "RolloutEvents",
     "WorldAdapter",
     "WorldSetup",
@@ -72,6 +73,24 @@ class CameraCapture:
 
 
 @dataclass(frozen=True)
+class LidarCapture:
+    """One full LiDAR sweep, already in the rig frame.
+
+    In the rig frame rather than the sensor's for the same reason the ego pose
+    is rig-anchored: the conversion out of CARLA's left-handed sensor frame is
+    the adapter's job, done once through
+    :func:`~carla_driver_interface.runtime.conversions.lidar_points_to_rig`.
+    """
+
+    logical_id: str
+    timestamp_us: int
+    #: The sensor's mount, in the rig frame.
+    pose_in_rig: Pose
+    #: ``[N, 4]`` float32: x, y, z (rig frame, metres) and intensity in [0, 1].
+    points_xyzi: np.ndarray
+
+
+@dataclass(frozen=True)
 class WorldSnapshot:
     """The result of one simulator tick."""
 
@@ -79,6 +98,7 @@ class WorldSnapshot:
     timestamp_us: int
     ego: EgoState
     captures: list[CameraCapture] = field(default_factory=list)
+    lidar: list[LidarCapture] = field(default_factory=list)
 
 
 @dataclass
@@ -117,12 +137,12 @@ class WorldAdapter(Protocol):
     def apply_control(self, command: VehicleCommand) -> None:
         """Latch actuation, applied on the next :meth:`tick`."""
 
-    def environment(self, snapshot: WorldSnapshot) -> CarlaRendererData:
+    def environment(self, snapshot: WorldSnapshot) -> RendererData:
         """Ground truth for this instant, as the extension payload itself.
 
         Returning the proto rather than a mirror dataclass keeps one definition
         of what the driver can be told: adding a field to
-        ``carla_driver.v0.CarlaRendererData`` is a change here and nowhere else.
+        ``driver_extension.v0.RendererData`` is a change here and nowhere else.
         """
 
     def events(self) -> RolloutEvents:

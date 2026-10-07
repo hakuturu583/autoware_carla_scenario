@@ -23,7 +23,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROTO_ROOT = REPO_ROOT / "proto"
 OUT_ROOT = REPO_ROOT / "src" / "carla_driver_interface" / "grpc_api"
-PROTO_FILES = ("carla_driver/v0/carla_driver.proto",)
+PROTO_FILES = ("driver_extension/v0/driver_extension.proto",)
 
 
 def alpasim_grpc_include() -> Path:
@@ -42,7 +42,7 @@ def alpasim_grpc_include() -> Path:
 def compile_protos(out_root: Path | None = None) -> Path:
     """Generate the protobuf modules. Returns the output root."""
     out_root = Path(out_root) if out_root is not None else OUT_ROOT
-    generated = out_root / "carla_driver"
+    generated = out_root / "driver_extension"
     if generated.exists():
         shutil.rmtree(generated)
     out_root.mkdir(parents=True, exist_ok=True)
