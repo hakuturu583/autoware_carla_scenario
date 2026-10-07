@@ -98,8 +98,16 @@ class _RawFrame:
 class _RawSweep:
     """An un-converted CARLA LiDAR measurement, in the sensor's own frame."""
 
+    frame: int
     timestamp_us: int
     points_xyzi: np.ndarray
+
+
+#: How long a tick waits for its own LiDAR sweep. In synchronous mode the
+#: measurement is delivered on the client's sensor thread *after* `tick()`
+#: returns, so reading the queue straight away misses it now and then --
+#: measured on Town10HD_Opt, often enough to fail a 250-step rollout.
+_SWEEP_WAIT_S = 2.0
 
 
 class CarlaWorldAdapter:
@@ -370,6 +378,7 @@ class CarlaWorldAdapter:
                 points = np.frombuffer(measurement.raw_data, dtype=np.float32).reshape(-1, 4)
                 sweeps.put(
                     _RawSweep(
+                        frame=int(measurement.frame),
                         timestamp_us=seconds_to_us(measurement.timestamp, epoch),
                         points_xyzi=points.copy(),
                     )
@@ -474,7 +483,7 @@ class CarlaWorldAdapter:
             timestamp_us=timestamp_us,
             ego=self._ego_state(timestamp_us),
             captures=self._drain_captures(),
-            lidar=self._drain_sweeps(),
+            lidar=self._drain_sweeps(int(frame_id)),
         )
 
     def apply_control(self, command: VehicleCommand) -> None:
@@ -572,8 +581,13 @@ class CarlaWorldAdapter:
             )
         return captures
 
-    def _drain_sweeps(self) -> list[LidarCapture]:
-        """The newest sweep per LiDAR, in the rig frame; any backlog is stale."""
+    def _drain_sweeps(self, frame_id: int) -> list[LidarCapture]:
+        """This tick's sweep per LiDAR, in the rig frame; any backlog is stale.
+
+        Waits for the sweep of ``frame_id`` rather than taking whatever has
+        arrived: a policy that reads LiDAR has nothing to plan from without it,
+        and the measurement routinely lands just after the tick returns.
+        """
         sweeps = []
         for logical_id, pending in self._sweep_queues.items():
             newest: _RawSweep | None = None
@@ -582,6 +596,16 @@ class CarlaWorldAdapter:
                     newest = pending.get_nowait()
                 except queue.Empty:
                     break
+            try:
+                while newest is None or newest.frame < frame_id:
+                    newest = pending.get(timeout=_SWEEP_WAIT_S)
+            except queue.Empty:
+                logger.warning(
+                    "no sweep from %s for frame %d within %.1f s",
+                    logical_id,
+                    frame_id,
+                    _SWEEP_WAIT_S,
+                )
             if newest is None:
                 continue
             pose = self._lidar_poses[logical_id]
