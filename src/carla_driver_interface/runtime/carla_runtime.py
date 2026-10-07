@@ -181,6 +181,7 @@ class CarlaRuntime:
                 collisions=events.collisions,
                 lane_invasions=events.lane_invasions,
                 route_completion=completion,
+                sensor_timeouts=events.sensor_timeouts,
                 error_code=error_code,
             ),
             steps=steps,
@@ -305,6 +306,8 @@ class CarlaRuntime:
         thing every adapter shares instead of one more each must remember.
         """
         data = self.world.environment(snapshot)
+        # Sweeps come from the snapshot, once; an adapter's own would duplicate them.
+        data.ClearField("lidar")
         for sweep in snapshot.lidar:
             data.lidar.append(
                 pack_lidar_sweep(

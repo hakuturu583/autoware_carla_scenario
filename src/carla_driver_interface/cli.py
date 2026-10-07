@@ -120,6 +120,12 @@ def _add_common_rollout_args(parser: argparse.ArgumentParser) -> None:
         help="metres from the ego within which lanes are sent (with --lanes)",
     )
     parser.add_argument(
+        "--route-horizon",
+        type=float,
+        default=80.0,
+        help="metres of route ahead of the ego sent each step",
+    )
+    parser.add_argument(
         "--metrics-json",
         default=None,
         help="write the rollout's aggregated metrics to this path",
@@ -223,6 +229,7 @@ def _base_config(args: argparse.Namespace) -> RuntimeConfig:
         lidars=[LidarConfig()] if args.lidar else [],
         send_lanes=args.lanes,
         lane_horizon_m=args.lane_horizon,
+        route_horizon_m=args.route_horizon,
     )
 
 

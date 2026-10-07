@@ -74,7 +74,7 @@ class CameraCapture:
     image_bytes: bytes
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class LidarCapture:
     """One full LiDAR sweep: CARLA's raw buffer, put into the rig frame on demand.
 
@@ -119,6 +119,8 @@ class RolloutEvents:
     #: Frames that failed to encode. Non-zero means the driver saw fewer images
     #: than the rollout claims, which is otherwise invisible.
     encode_failures: int = 0
+    #: Sensor measurements that did not arrive for their tick and were skipped.
+    sensor_timeouts: int = 0
 
 
 @dataclass(frozen=True)

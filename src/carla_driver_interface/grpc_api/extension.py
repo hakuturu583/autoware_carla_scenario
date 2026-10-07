@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Codec for the CARLA payloads that ride inside alpasim's ``bytes`` fields.
+"""Codec for the extension payloads that ride inside alpasim's ``bytes`` fields.
 
 Upstream leaves two fields free-form so implementers can carry their own data
 without forking the proto:
@@ -15,7 +15,7 @@ round-trippable in a single test and gives the tolerance policy one home.
 **Tolerance policy:** unpacking never raises. These fields are free-form by
 definition, so a peer -- an upstream alpasim runtime, or a driver from another
 project -- may legitimately put something else there. An unparseable payload
-means "no CARLA data", not "the rollout is broken".
+means "no extension data", not "the rollout is broken".
 """
 
 from __future__ import annotations

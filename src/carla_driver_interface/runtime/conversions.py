@@ -48,6 +48,7 @@ __all__ = [
     "rig_offset_pose",
     "carla_rotation_to_quat_xyzw",
     "carla_transform_to_pose",
+    "carla_angular_velocity_to_local",
     "carla_vector_to_local",
     "lidar_points_to_rig",
     "pinhole_camera_spec",
@@ -71,6 +72,17 @@ def seconds_to_us(seconds: float, epoch_offset_us: int = 0) -> int:
 def carla_vector_to_local(x: float, y: float, z: float) -> np.ndarray:
     """Mirror a CARLA world/relative vector into the right-handed convention."""
     return np.array([x, -y, z], dtype=np.float64)
+
+
+def carla_angular_velocity_to_local(x_deg: float, y_deg: float, z_deg: float) -> np.ndarray:
+    """A CARLA angular velocity (degrees/s) in the right-handed convention, rad/s.
+
+    An angular velocity is an axial vector: under the y mirror it picks up the
+    mirror's determinant, so it maps to ``(-x, y, -z)``, not to the ``(x, -y, z)``
+    of a position or a velocity. Turning left raises local yaw, and must come
+    out as a positive yaw rate.
+    """
+    return np.radians(np.array([-x_deg, y_deg, -z_deg], dtype=np.float64))
 
 
 def waypoint_to_local(waypoint: Any) -> np.ndarray:

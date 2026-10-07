@@ -13,9 +13,9 @@ version string, because forks report versions inconsistently.
 from __future__ import annotations
 
 import logging
-import math
 import queue
 import random
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,6 +36,7 @@ from carla_driver_interface.runtime.control import VehicleCommand
 from carla_driver_interface.runtime.conversions import (
     available_camera,
     camera_pose_in_rig,
+    carla_angular_velocity_to_local,
     carla_transform_to_pose,
     carla_vector_to_local,
     rig_pose_from_actor_transform,
@@ -111,12 +112,13 @@ class _RawSweep:
 _SENSOR_WAIT_S = 2.0
 
 
-def _take_frame(pending: queue.Queue, frame_id: int, sensor: str) -> Any:
-    """The newest queued measurement, waiting for ``frame_id``'s if not yet in.
+def _take_frame(pending: queue.Queue, frame_id: int, sensor: str, deadline: float) -> Any:
+    """This tick's measurement, waiting for it until ``deadline`` (``time.monotonic``).
 
-    Any backlog is discarded: it is older than this tick. When the wait times
-    out, the newest measurement there is (possibly an older frame's) is returned
-    with a warning, rather than none.
+    Any backlog is discarded: it is older than this tick. When the measurement
+    does not arrive in time, ``None`` -- an older frame would be stale, which is
+    exactly what must not be submitted. One deadline is shared by every sensor
+    of a tick, so a tick waits at most ``_SENSOR_WAIT_S`` however many miss.
     """
     newest = None
     dropped = -1
@@ -128,11 +130,10 @@ def _take_frame(pending: queue.Queue, frame_id: int, sensor: str) -> Any:
             break
     try:
         while newest is None or newest.frame < frame_id:
-            newest = pending.get(timeout=_SENSOR_WAIT_S)
+            newest = pending.get(timeout=max(0.0, deadline - time.monotonic()))
     except queue.Empty:
-        logger.warning(
-            "no measurement from %s for frame %d within %.1f s", sensor, frame_id, _SENSOR_WAIT_S
-        )
+        logger.warning("no measurement from %s for frame %d in time; skipped", sensor, frame_id)
+        return None
     if dropped > 0:
         logger.debug("dropped %d stale measurements from %s", dropped, sensor)
     return newest
@@ -375,7 +376,10 @@ class CarlaWorldAdapter:
             blueprint.set_attribute("rotation_frequency", str(1.0 / self.config.fixed_delta_s))
             blueprint.set_attribute("upper_fov", str(lidar.upper_fov_deg))
             blueprint.set_attribute("lower_fov", str(lidar.lower_fov_deg))
-            blueprint.set_attribute("sensor_tick", str(self.config.fixed_delta_s))
+            # 0 = every tick in synchronous mode. Equal to fixed_delta_s, float
+            # accumulation can skip a tick, and the next sweep then spans two
+            # revolutions.
+            blueprint.set_attribute("sensor_tick", "0.0")
             if blueprint.has_attribute("dropoff_general_rate"):
                 blueprint.set_attribute("dropoff_general_rate", str(lidar.dropoff_general_rate))
 
@@ -503,6 +507,7 @@ class CarlaWorldAdapter:
             self._pending_control = None
 
         frame_id = self._world.tick()
+        deadline = time.monotonic() + _SENSOR_WAIT_S
         snapshot = self._world.get_snapshot()
         timestamp_us = seconds_to_us(
             snapshot.timestamp.elapsed_seconds, self.config.epoch_offset_us
@@ -511,8 +516,8 @@ class CarlaWorldAdapter:
             frame_id=int(frame_id),
             timestamp_us=timestamp_us,
             ego=self._ego_state(timestamp_us),
-            captures=self._drain_captures(int(frame_id)),
-            lidar=self._drain_sweeps(int(frame_id)),
+            captures=self._drain_captures(int(frame_id), deadline),
+            lidar=self._drain_sweeps(int(frame_id), deadline),
         )
 
     def apply_control(self, command: VehicleCommand) -> None:
@@ -550,9 +555,7 @@ class CarlaWorldAdapter:
 
         velocity_local = carla_vector_to_local(velocity.x, velocity.y, velocity.z)
         acceleration_local = carla_vector_to_local(acceleration.x, acceleration.y, acceleration.z)
-        angular_local = carla_vector_to_local(
-            math.radians(angular.x), math.radians(angular.y), math.radians(angular.z)
-        )
+        angular_local = carla_angular_velocity_to_local(angular.x, angular.y, angular.z)
 
         return EgoState(
             timestamp_us=timestamp_us,
@@ -562,7 +565,7 @@ class CarlaWorldAdapter:
             linear_acceleration_in_rig=vector_local_to_rig(acceleration_local, pose),
         )
 
-    def _drain_captures(self, frame_id: int) -> list[CameraCapture]:
+    def _drain_captures(self, frame_id: int, deadline: float) -> list[CameraCapture]:
         """Take the newest frame per camera, discarding any backlog, and encode it.
 
         A backlog means the sensor produced more frames than this policy step
@@ -573,8 +576,9 @@ class CarlaWorldAdapter:
         """
         captures = []
         for logical_id, frames in self._frame_queues.items():
-            newest: _RawFrame | None = _take_frame(frames, frame_id, logical_id)
+            newest: _RawFrame | None = _take_frame(frames, frame_id, logical_id, deadline)
             if newest is None:
+                self._events.sensor_timeouts += 1
                 continue
             try:
                 image_bytes = encode_bgra(
@@ -601,12 +605,14 @@ class CarlaWorldAdapter:
             )
         return captures
 
-    def _drain_sweeps(self, frame_id: int) -> list[LidarCapture]:
+    def _drain_sweeps(self, frame_id: int, deadline: float) -> list[LidarCapture]:
         """This tick's sweep per LiDAR; the rig-frame conversion is left to the reader."""
         sweeps = []
         for logical_id, pending in self._sweep_queues.items():
-            newest: _RawSweep | None = _take_frame(pending, frame_id, logical_id)
-            if newest is not None:
+            newest: _RawSweep | None = _take_frame(pending, frame_id, logical_id, deadline)
+            if newest is None:
+                self._events.sensor_timeouts += 1
+            else:
                 sweeps.append(
                     LidarCapture(
                         logical_id=logical_id,

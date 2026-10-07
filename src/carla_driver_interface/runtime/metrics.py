@@ -155,6 +155,7 @@ class MetricsCollector:
         lane_invasions: int,
         route_completion: float,
         error_code: RolloutErrorCode,
+        sensor_timeouts: int = 0,
     ) -> SimulationReturn.RolloutReturn:
         timestep_metrics = [
             _TimestepMetric(
@@ -171,6 +172,7 @@ class MetricsCollector:
         aggregated = {
             "collisions": float(collisions),
             "lane_invasions": float(lane_invasions),
+            "sensor_timeouts": float(sensor_timeouts),
             "distance_travelled_m": self._distance_m,
             "route_completion": route_completion,
             "steps": float(len(speed_series.values)) if speed_series else 0.0,

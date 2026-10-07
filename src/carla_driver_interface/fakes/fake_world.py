@@ -325,7 +325,9 @@ class FakeWorld:
         CARLA's left-handed sensor frame -- the buffer a real sensor delivers --
         so it reaches the rig through the same
         :func:`~carla_driver_interface.runtime.conversions.lidar_points_to_rig`
-        a real sweep takes, and a sign error there cannot pass here.
+        a real sweep takes. A level, centred mount sweeps a y-symmetric ring
+        that a lost mirror would leave unchanged; a rolled or offset mount does
+        not (``tests/test_lidar_and_lanes.py`` uses one).
         """
         pose = self._lidar_poses[lidar.logical_id]
         per_sweep = max(1, int(lidar.points_per_second * self.config.fixed_delta_s))

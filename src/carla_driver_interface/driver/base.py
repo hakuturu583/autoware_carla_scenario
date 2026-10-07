@@ -118,7 +118,7 @@ class DriveContext:
     time_now_us: int
     #: The instant the runtime will next step the vehicle to.
     time_query_us: int
-    #: CARLA ground truth, when the runtime is this project's.  ``None`` when
+    #: Simulator ground truth, when the runtime is this project's.  ``None`` when
     #: driven by upstream alpasim, or when the payload could not be parsed.
     renderer_data: RendererData | None
 

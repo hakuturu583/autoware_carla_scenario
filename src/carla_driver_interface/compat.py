@@ -27,11 +27,11 @@ __all__ = [
 ]
 
 
-def _entry(area: str, alpasim: str, carla: str, level: CompatLevel, *symbols: str) -> CompatEntry:
+def _entry(area: str, alpasim: str, ours: str, level: CompatLevel, *symbols: str) -> CompatEntry:
     return CompatEntry(
         area=area,
         alpasim_behaviour=alpasim,
-        implementation_behaviour=carla,
+        implementation_behaviour=ours,
         level=level,
         symbols=list(symbols),
     )

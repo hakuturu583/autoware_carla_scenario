@@ -66,7 +66,7 @@ def lane_marking_type(marking: Any) -> LaneMarkingType:
     return _MARKINGS.get(name, LaneMarkingType.LANE_MARKING_TYPE_UNKNOWN)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class LaneGeometry:
     """One lane in the ``local`` frame, sampled in its driving direction."""
 
@@ -212,6 +212,13 @@ def carla_lane_geometries(
         waypoints.sort(key=lambda wp: wp.s)
         if waypoints[0].lane_id > 0:
             waypoints.reverse()
+        # generate_waypoints samples every `resolution_m`, so a lane stops up to
+        # that short of its end and a section shorter than it is one point.
+        # Walking on to the lane end closes the gap to the next section and
+        # keeps short connectors in the graph.
+        tail = getattr(waypoints[-1], "next_until_lane_end", None)
+        if tail is not None:
+            waypoints.extend(wp for wp in tail(resolution_m) if carla_lane_key(wp) == lane_id)
         if len(waypoints) < 2:
             continue
         centre, left, right = [], [], []

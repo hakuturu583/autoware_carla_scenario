@@ -334,3 +334,69 @@ def test_nothing_extra_is_sent_unless_asked_for():
     data = world.environment(snapshot)
     assert snapshot.lidar == []
     assert len(data.lanes) == 0
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups
+# ---------------------------------------------------------------------------
+
+
+def test_angular_velocity_mirrors_as_an_axial_vector():
+    from carla_driver_interface.runtime.conversions import carla_angular_velocity_to_local
+
+    # CARLA yaw grows clockwise seen from above (a right turn); in the
+    # right-handed local frame a right turn is a negative yaw rate.
+    np.testing.assert_allclose(
+        carla_angular_velocity_to_local(0.0, 0.0, 10.0), [0.0, 0.0, -math.radians(10.0)]
+    )
+    # Roll and pitch rates flip and keep their sign respectively, as the
+    # mirror's determinant demands.
+    np.testing.assert_allclose(
+        carla_angular_velocity_to_local(5.0, 7.0, 0.0)[:2], np.radians([-5.0, 7.0])
+    )
+
+
+def test_a_rolled_mount_puts_the_fake_sweep_on_the_ground():
+    # A level, centred mount sweeps a y-symmetric ring, which a lost y-mirror
+    # would leave unchanged; rolled and offset, the same mistake tilts the
+    # ground out of z = 0.
+    lidar = LidarConfig(channels=16, range_m=30.0, y=0.4, z=1.8, roll_deg=8.0, yaw_deg=20.0)
+    world = FakeWorld(RuntimeConfig(lidars=[lidar]))
+    world.setup()
+    (sweep,) = world.tick().lidar
+    np.testing.assert_allclose(sweep.points_xyzi[:, 2], 0.0, atol=1e-3)
+
+
+def test_take_frame_discards_backlog_skips_on_timeout_and_accepts_newer():
+    import queue
+    import time
+
+    from carla_driver_interface.runtime import carla_world
+
+    pending: queue.Queue = queue.Queue()
+    for frame in (3, 4, 5):
+        pending.put(SimpleNamespace(frame=frame))
+    assert carla_world._take_frame(pending, 5, "cam", time.monotonic() + 0.5).frame == 5
+    assert pending.empty()
+
+    pending.put(SimpleNamespace(frame=6))
+    started = time.monotonic()
+    assert carla_world._take_frame(pending, 7, "cam", started + 0.05) is None
+    assert time.monotonic() - started < 0.5
+
+    pending.put(SimpleNamespace(frame=9))
+    assert carla_world._take_frame(pending, 8, "cam", time.monotonic() + 0.05).frame == 9
+
+
+def test_a_lane_runs_on_to_its_end_past_the_last_sample():
+    first = _waypoint(1, 0, -1, 0.0, 0.0, 1.75, 0.0)
+    end = _waypoint(1, 0, -1, 3.0, 3.0, 1.75, 0.0)
+    elsewhere = _waypoint(2, 0, -1, 0.0, 3.0, 1.75, 0.0)
+    first.next_until_lane_end = lambda step: [end, elsewhere]
+
+    (lane,) = [
+        lane
+        for lane in carla_lane_geometries(_StandInMap([first]), 2.0, lambda wp: 0.0)
+        if lane.lane_id == "1:0:-1"
+    ]
+    np.testing.assert_allclose(lane.centerline[:, 0], [0.0, 3.0])
