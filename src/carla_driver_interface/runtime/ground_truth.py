@@ -153,12 +153,24 @@ class CarlaGroundTruth:
     def _lights_by_lane(self) -> dict[str, list[Any]]:
         """Which light's stop line lies on which lane, by ``Lane.lane_id``."""
         if self._lights_by_lane_id is None:
-            index: dict[str, list[Any]] = {}
-            for light in self._world.get_actors().filter("traffic.traffic_light*"):
-                for waypoint in light.get_stop_waypoints():
-                    index.setdefault(carla_lane_key(waypoint), []).append(light)
-            self._lights_by_lane_id = index
+            self._index_lights()
+        assert self._lights_by_lane_id is not None
         return self._lights_by_lane_id
+
+    def _index_lights(self) -> None:
+        """Both light indexes, from one scan -- lights do not move.
+
+        By ``(road_id, lane_id)`` for the walk down the ego's lane, and by the
+        section-qualified ``Lane.lane_id`` for the lanes sent to the policy:
+        one source, so the two cannot disagree about which light a lane has.
+        """
+        by_road_lane: dict[tuple[int, int], list[Any]] = {}
+        by_lane_id: dict[str, list[Any]] = {}
+        for light in self._world.get_actors().filter("traffic.traffic_light*"):
+            for waypoint in light.get_stop_waypoints():
+                by_road_lane.setdefault((waypoint.road_id, waypoint.lane_id), []).append(light)
+                by_lane_id.setdefault(carla_lane_key(waypoint), []).append(light)
+        self._stop_lines, self._lights_by_lane_id = by_road_lane, by_lane_id
 
     def _speed_limits_by_road(self) -> dict[int, float]:
         """Posted limits by road id, in m/s, from the map's speed signs.
@@ -286,11 +298,8 @@ class CarlaGroundTruth:
     def _stop_lines_by_lane(self) -> dict[tuple[int, int], list[Any]]:
         """Which light governs which lane, built once -- lights do not move."""
         if self._stop_lines is None:
-            index: dict[tuple[int, int], list[Any]] = {}
-            for light in self._world.get_actors().filter("traffic.traffic_light*"):
-                for waypoint in light.get_stop_waypoints():
-                    index.setdefault((waypoint.road_id, waypoint.lane_id), []).append(light)
-            self._stop_lines = index
+            self._index_lights()
+        assert self._stop_lines is not None
         return self._stop_lines
 
     def _weather(self) -> Weather:

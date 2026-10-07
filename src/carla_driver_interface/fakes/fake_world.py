@@ -29,7 +29,6 @@ from carla_driver_interface.runtime.control import VehicleCommand
 from carla_driver_interface.runtime.conversions import (
     available_camera,
     camera_pose_in_rig,
-    lidar_points_to_rig,
     seconds_to_us,
     sensor_pose_in_rig,
 )
@@ -136,6 +135,8 @@ class FakeWorld:
             )
             for lidar in config.lidars
         }
+        # Flat ground and a fixed mount: the sweep never changes, so it is cast once.
+        self._sweeps = {lidar.logical_id: self._cast_sweep(lidar) for lidar in config.lidars}
 
     # -- WorldAdapter ------------------------------------------------------
 
@@ -182,7 +183,15 @@ class FakeWorld:
             timestamp_us=timestamp_us,
             ego=ego,
             captures=self._captures(timestamp_us),
-            lidar=[self._sweep(lidar, timestamp_us) for lidar in self.config.lidars],
+            lidar=[
+                LidarCapture(
+                    logical_id=lidar.logical_id,
+                    timestamp_us=timestamp_us,
+                    pose_in_rig=self._lidar_poses[lidar.logical_id],
+                    points_in_sensor=self._sweeps[lidar.logical_id],
+                )
+                for lidar in self.config.lidars
+            ],
         )
 
     def environment(self, snapshot: WorldSnapshot) -> RendererData:
@@ -309,13 +318,14 @@ class FakeWorld:
             ),
         ]
 
-    def _sweep(self, lidar: LidarConfig, timestamp_us: int) -> LidarCapture:
+    def _cast_sweep(self, lidar: LidarConfig) -> np.ndarray:
         """A flat-ground sweep: every downward beam that lands within range.
 
-        Generated in the rig frame, where the ground is z = 0, then expressed
-        in CARLA's left-handed sensor frame and handed to
-        :func:`lidar_points_to_rig` -- the same conversion a real sweep takes,
-        so a sign error there cannot pass here.
+        Cast in the rig frame, where the ground is z = 0, then expressed in
+        CARLA's left-handed sensor frame -- the buffer a real sensor delivers --
+        so it reaches the rig through the same
+        :func:`~carla_driver_interface.runtime.conversions.lidar_points_to_rig`
+        a real sweep takes, and a sign error there cannot pass here.
         """
         pose = self._lidar_poses[lidar.logical_id]
         per_sweep = max(1, int(lidar.points_per_second * self.config.fixed_delta_s))
@@ -338,12 +348,5 @@ class FakeWorld:
 
         points_sensor = pose.inverse().transform_points(points_rig)
         points_sensor[:, 1] = -points_sensor[:, 1]  # into CARLA's left-handed frame
-        raw = np.concatenate([points_sensor, np.full((len(points_sensor), 1), 0.5)], axis=1).astype(
-            np.float32
-        )
-        return LidarCapture(
-            logical_id=lidar.logical_id,
-            timestamp_us=timestamp_us,
-            pose_in_rig=pose,
-            points_xyzi=lidar_points_to_rig(raw, pose),
-        )
+        intensity = np.full((len(points_sensor), 1), 0.5)
+        return np.concatenate([points_sensor, intensity], axis=1).astype(np.float32)

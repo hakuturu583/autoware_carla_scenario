@@ -20,14 +20,14 @@ because that is how OpenDRIVE defines them.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 
 from carla_driver_interface.geometry import Pose
 from carla_driver_interface.grpc_api import Lane, LaneMarkingType, TrafficLightState
-from carla_driver_interface.grpc_api.extension import polyline_to_vec3
+from carla_driver_interface.grpc_api.extension import pack_lane_polylines
 from carla_driver_interface.runtime.conversions import carla_vector_to_local
 
 __all__ = [
@@ -38,9 +38,6 @@ __all__ = [
     "lanes_in_rig",
     "route_lane_order",
 ]
-
-#: A lane's identity under CARLA: ``(road_id, section_id, lane_id)``.
-LaneKey = tuple[int, int, int]
 
 _MARKINGS = {
     "NONE": LaneMarkingType.LANE_MARKING_TYPE_NONE,
@@ -83,6 +80,8 @@ class LaneGeometry:
     is_junction: bool = False
     #: m/s; 0 when unknown.
     speed_limit_mps: float = 0.0
+    #: ``(centre, radius)`` of the centreline's bounding circle, derived.
+    bounds: tuple[np.ndarray, float] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         shapes = {
@@ -92,6 +91,12 @@ class LaneGeometry:
         }
         if len(shapes) != 1 or len(next(iter(shapes))) != 2 or next(iter(shapes))[1] != 3:
             raise ValueError(f"lane {self.lane_id!r}: polylines must share one [N, 3] shape")
+        # A bounding circle, so a lane far beyond the horizon is rejected
+        # without measuring each of its stations every step.
+        xy = np.asarray(self.centerline, dtype=np.float64)[:, :2]
+        centre = xy.mean(axis=0) if len(xy) else np.zeros(2)
+        radius = float(np.max(np.linalg.norm(xy - centre, axis=1))) if len(xy) else 0.0
+        object.__setattr__(self, "bounds", (centre, radius))
 
 
 def lanes_in_rig(
@@ -118,7 +123,8 @@ def lanes_in_rig(
 
     found: list[tuple[float, Lane]] = []
     for lane in lanes:
-        if len(lane.centerline) < 2:
+        centre, radius = lane.bounds
+        if len(lane.centerline) < 2 or np.linalg.norm(centre - ego_xy) - radius > horizon_m:
             continue
         distance = np.linalg.norm(lane.centerline[:, :2] - ego_xy, axis=1)
         inside = distance <= horizon_m
@@ -129,17 +135,17 @@ def lanes_in_rig(
         if stop - start < 2:
             continue
         window = slice(start, stop)
+
+        def rig(points: np.ndarray, window: slice = window) -> np.ndarray:
+            return to_rig.transform_points(points[window])
+
         found.append(
             (
                 float(distance[nearest]),
                 Lane(
                     lane_id=lane.lane_id,
-                    centerline=polyline_to_vec3(to_rig.transform_points(lane.centerline[window])),
-                    left_boundary=polyline_to_vec3(
-                        to_rig.transform_points(lane.left_boundary[window])
-                    ),
-                    right_boundary=polyline_to_vec3(
-                        to_rig.transform_points(lane.right_boundary[window])
+                    **pack_lane_polylines(
+                        rig(lane.centerline), rig(lane.left_boundary), rig(lane.right_boundary)
                     ),
                     left_marking=lane.left_marking,
                     right_marking=lane.right_marking,
@@ -157,9 +163,7 @@ def lanes_in_rig(
 
 
 def _run_around(inside: np.ndarray, index: int) -> tuple[int, int]:
-    """The ``[start, stop)`` run of ``True`` containing ``index``."""
-    if not inside[index]:
-        return index, index
+    """The ``[start, stop)`` run of ``True`` containing ``index`` (which is ``True``)."""
     start = index
     while start > 0 and inside[start - 1]:
         start -= 1
@@ -190,7 +194,7 @@ def carla_lane_key(waypoint: Any) -> str:
 def carla_lane_geometries(
     carla_map: Any,
     resolution_m: float,
-    speed_limit_for: Callable[[Any], float] | None = None,
+    speed_limit_for: Callable[[Any], float],
 ) -> list[LaneGeometry]:
     """Every driving lane of a ``carla.Map``, in the ``local`` frame.
 
@@ -231,7 +235,7 @@ def carla_lane_geometries(
                 left_marking=lane_marking_type(getattr(first, "left_lane_marking", None)),
                 right_marking=lane_marking_type(getattr(first, "right_lane_marking", None)),
                 is_junction=bool(first.is_junction),
-                speed_limit_mps=float(speed_limit_for(first)) if speed_limit_for else 0.0,
+                speed_limit_mps=float(speed_limit_for(first)),
             )
         )
     return lanes

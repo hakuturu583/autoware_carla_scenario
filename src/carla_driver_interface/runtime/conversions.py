@@ -155,10 +155,12 @@ def lidar_points_to_rig(points_xyzi_in_sensor: np.ndarray, pose_in_rig: Pose) ->
     carries them into the rig. Intensity passes through untouched.
     """
     raw = np.asarray(points_xyzi_in_sensor, dtype=np.float32).reshape(-1, 4)
-    xyz = raw[:, :3].astype(np.float64)
-    xyz[:, 1] = -xyz[:, 1]
+    # The mirror folded into the rotation, and float32 throughout: a sweep is
+    # up to ~10^5-10^6 points, and float32 is centimetre-exact at LiDAR range.
+    rotation = pose_in_rig.rotation_matrix * np.array([1.0, -1.0, 1.0])
     out = np.empty_like(raw)
-    out[:, :3] = pose_in_rig.transform_points(xyz) if len(xyz) else xyz
+    np.matmul(raw[:, :3], rotation.T.astype(np.float32), out=out[:, :3])
+    out[:, :3] += pose_in_rig.position.astype(np.float32)
     out[:, 3] = raw[:, 3]
     return out
 

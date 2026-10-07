@@ -125,11 +125,12 @@ class RendererData(_message.Message):
     def __init__(self, snapshot_timestamp_us: _Optional[int] = ..., frame_id: _Optional[int] = ..., map_name: _Optional[str] = ..., weather: _Optional[_Union[Weather, _Mapping]] = ..., ego_traffic_light: _Optional[_Union[TrafficLightState, str]] = ..., ego_traffic_light_distance_m: _Optional[float] = ..., speed_limit_mps: _Optional[float] = ..., actors: _Optional[_Iterable[_Union[ActorState, _Mapping]]] = ..., lanes: _Optional[_Iterable[_Union[Lane, _Mapping]]] = ..., lidar: _Optional[_Iterable[_Union[LidarSweep, _Mapping]]] = ...) -> None: ...
 
 class Lane(_message.Message):
-    __slots__ = ("lane_id", "centerline", "left_boundary", "right_boundary", "left_marking", "right_marking", "traffic_light", "speed_limit_mps", "route_index", "is_junction")
+    __slots__ = ("lane_id", "num_points", "centerline_xyz", "left_boundary_xyz", "right_boundary_xyz", "left_marking", "right_marking", "traffic_light", "speed_limit_mps", "route_index", "is_junction")
     LANE_ID_FIELD_NUMBER: _ClassVar[int]
-    CENTERLINE_FIELD_NUMBER: _ClassVar[int]
-    LEFT_BOUNDARY_FIELD_NUMBER: _ClassVar[int]
-    RIGHT_BOUNDARY_FIELD_NUMBER: _ClassVar[int]
+    NUM_POINTS_FIELD_NUMBER: _ClassVar[int]
+    CENTERLINE_XYZ_FIELD_NUMBER: _ClassVar[int]
+    LEFT_BOUNDARY_XYZ_FIELD_NUMBER: _ClassVar[int]
+    RIGHT_BOUNDARY_XYZ_FIELD_NUMBER: _ClassVar[int]
     LEFT_MARKING_FIELD_NUMBER: _ClassVar[int]
     RIGHT_MARKING_FIELD_NUMBER: _ClassVar[int]
     TRAFFIC_LIGHT_FIELD_NUMBER: _ClassVar[int]
@@ -137,16 +138,17 @@ class Lane(_message.Message):
     ROUTE_INDEX_FIELD_NUMBER: _ClassVar[int]
     IS_JUNCTION_FIELD_NUMBER: _ClassVar[int]
     lane_id: str
-    centerline: _containers.RepeatedCompositeFieldContainer[_common_pb2.Vec3]
-    left_boundary: _containers.RepeatedCompositeFieldContainer[_common_pb2.Vec3]
-    right_boundary: _containers.RepeatedCompositeFieldContainer[_common_pb2.Vec3]
+    num_points: int
+    centerline_xyz: bytes
+    left_boundary_xyz: bytes
+    right_boundary_xyz: bytes
     left_marking: LaneMarkingType
     right_marking: LaneMarkingType
     traffic_light: TrafficLightState
     speed_limit_mps: float
     route_index: int
     is_junction: bool
-    def __init__(self, lane_id: _Optional[str] = ..., centerline: _Optional[_Iterable[_Union[_common_pb2.Vec3, _Mapping]]] = ..., left_boundary: _Optional[_Iterable[_Union[_common_pb2.Vec3, _Mapping]]] = ..., right_boundary: _Optional[_Iterable[_Union[_common_pb2.Vec3, _Mapping]]] = ..., left_marking: _Optional[_Union[LaneMarkingType, str]] = ..., right_marking: _Optional[_Union[LaneMarkingType, str]] = ..., traffic_light: _Optional[_Union[TrafficLightState, str]] = ..., speed_limit_mps: _Optional[float] = ..., route_index: _Optional[int] = ..., is_junction: bool = ...) -> None: ...
+    def __init__(self, lane_id: _Optional[str] = ..., num_points: _Optional[int] = ..., centerline_xyz: _Optional[bytes] = ..., left_boundary_xyz: _Optional[bytes] = ..., right_boundary_xyz: _Optional[bytes] = ..., left_marking: _Optional[_Union[LaneMarkingType, str]] = ..., right_marking: _Optional[_Union[LaneMarkingType, str]] = ..., traffic_light: _Optional[_Union[TrafficLightState, str]] = ..., speed_limit_mps: _Optional[float] = ..., route_index: _Optional[int] = ..., is_junction: bool = ...) -> None: ...
 
 class LidarSweep(_message.Message):
     __slots__ = ("logical_id", "timestamp_us", "rig_to_lidar", "num_points", "points_xyzi")

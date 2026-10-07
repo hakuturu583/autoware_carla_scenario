@@ -13,10 +13,10 @@ from carla_driver_interface import __version__
 from carla_driver_interface.driver.policies import POLICY_REGISTRY
 from carla_driver_interface.driver.server import run_server
 from carla_driver_interface.runtime.config import (
+    LidarConfig,
     RuntimeConfig,
     ScenarioSpec,
     default_camera_rig,
-    default_lidar,
 )
 from carla_driver_interface.runtime.images import parse_image_format
 
@@ -220,7 +220,7 @@ def _base_config(args: argparse.Namespace) -> RuntimeConfig:
         fixed_delta_s=args.fixed_delta,
         seed=args.seed,
         image_format=parse_image_format(args.image_format),
-        lidars=[default_lidar()] if args.lidar else [],
+        lidars=[LidarConfig()] if args.lidar else [],
         send_lanes=args.lanes,
         lane_horizon_m=args.lane_horizon,
     )

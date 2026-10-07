@@ -118,25 +118,31 @@ enum LaneMarkingType {
 // direction, so point i of each describes one cross-section. "Left" and
 // "right" are relative to that direction, which in the right-handed rig frame
 // puts the left boundary on the +y side of a lane heading along +x.
+//
+// Each polyline is little-endian float32, row-major [num_points, 3] (x, y, z in
+// the rig frame), packed like `LidarSweep.points_xyzi`: a message per point
+// cost ~25 ms a step to build for a town's worth of lanes, and as long again
+// to read back.
 message Lane {
   // Stable across steps within a session, e.g.
   // "<road_id>:<section_id>:<lane_id>" for an OpenDRIVE map.
   string lane_id = 1;
-  repeated common.Vec3 centerline = 2;
-  repeated common.Vec3 left_boundary = 3;
-  repeated common.Vec3 right_boundary = 4;
-  LaneMarkingType left_marking = 5;
-  LaneMarkingType right_marking = 6;
+  uint32 num_points = 2;
+  bytes centerline_xyz = 3;
+  bytes left_boundary_xyz = 4;
+  bytes right_boundary_xyz = 5;
+  LaneMarkingType left_marking = 6;
+  LaneMarkingType right_marking = 7;
   // The light whose stop line lies on this lane; NONE when there is none.
-  TrafficLightState traffic_light = 7;
+  TrafficLightState traffic_light = 8;
   // Posted speed limit in m/s. 0 when unknown -- not "no limit".
-  float speed_limit_mps = 8;
+  float speed_limit_mps = 9;
   // Position of this lane along the ego's route, 0 for the first lane of the
   // route; -1 when the lane is not on the route. Lanes behind the ego keep
   // their index, so a consumer wanting "the route from here" orders by it and
   // drops what lies behind.
-  int32 route_index = 9;
-  bool is_junction = 10;
+  int32 route_index = 10;
+  bool is_junction = 11;
 }
 
 // One LiDAR sweep. Points are expressed in the rig frame (not the sensor's),

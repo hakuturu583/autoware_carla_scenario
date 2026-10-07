@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 
 import numpy as np
-from alpasim_grpc.v0.common_pb2 import Pose, Vec3
+from alpasim_grpc.v0.common_pb2 import Pose
 from google.protobuf.message import DecodeError
 
 from carla_driver_interface.grpc_api.driver_extension.v0.driver_extension_pb2 import (
@@ -38,10 +38,10 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "LIDAR_POINT_COLUMNS",
     "lane_polylines",
+    "pack_lane_polylines",
     "pack_debug_info",
     "pack_lidar_sweep",
     "pack_renderer_data",
-    "polyline_to_vec3",
     "unpack_debug_info",
     "unpack_lidar_points",
     "unpack_renderer_data",
@@ -50,7 +50,8 @@ __all__ = [
 #: ``LidarSweep.points_xyzi`` is ``[N, 4]``: x, y, z, intensity.
 LIDAR_POINT_COLUMNS = 4
 
-#: The wire byte order of ``points_xyzi``, stated rather than left to the host.
+#: The wire byte order of every packed array (``points_xyzi``, the lane
+#: polylines), stated rather than left to the host.
 _LIDAR_DTYPE = np.dtype("<f4")
 
 
@@ -125,15 +126,39 @@ def unpack_lidar_points(sweep: LidarSweep) -> np.ndarray:
     return flat.reshape(-1, LIDAR_POINT_COLUMNS).astype(np.float32, copy=True)
 
 
-def polyline_to_vec3(points: np.ndarray) -> list[Vec3]:
-    """``[N, 3]`` -> the ``repeated common.Vec3`` a ``Lane`` carries."""
-    return [Vec3(x=float(x), y=float(y), z=float(z)) for x, y, z in np.asarray(points)]
+def pack_lane_polylines(
+    centerline: np.ndarray, left_boundary: np.ndarray, right_boundary: np.ndarray
+) -> dict:
+    """``Lane`` field values for three ``[N, 3]`` rig-frame polylines of one length."""
+    arrays = [
+        np.ascontiguousarray(a, dtype=_LIDAR_DTYPE)
+        for a in (centerline, left_boundary, right_boundary)
+    ]
+    shapes = {a.shape for a in arrays}
+    if len(shapes) != 1 or len(arrays[0].shape) != 2 or arrays[0].shape[1] != 3:
+        raise ValueError(f"lane polylines must share one [N, 3] shape; got {sorted(shapes)}")
+    return {
+        "num_points": int(arrays[0].shape[0]),
+        "centerline_xyz": arrays[0].tobytes(),
+        "left_boundary_xyz": arrays[1].tobytes(),
+        "right_boundary_xyz": arrays[2].tobytes(),
+    }
 
 
 def lane_polylines(lane: Lane) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """``(centerline, left_boundary, right_boundary)``, each ``[N, 3]`` float64."""
+    """``(centerline, left_boundary, right_boundary)``, each ``[N, 3]`` float64.
 
-    def as_array(values) -> np.ndarray:
-        return np.array([(v.x, v.y, v.z) for v in values], dtype=np.float64).reshape(-1, 3)
-
-    return as_array(lane.centerline), as_array(lane.left_boundary), as_array(lane.right_boundary)
+    Raises when a polyline's size disagrees with ``num_points``, for the same
+    reason :func:`unpack_lidar_points` does.
+    """
+    expected = int(lane.num_points) * 3 * _LIDAR_DTYPE.itemsize
+    out = []
+    for name in ("centerline_xyz", "left_boundary_xyz", "right_boundary_xyz"):
+        payload = getattr(lane, name)
+        if len(payload) != expected:
+            raise ValueError(
+                f"lane {lane.lane_id!r}: {name} carries {len(payload)} bytes, "
+                f"{lane.num_points} points need {expected}"
+            )
+        out.append(np.frombuffer(payload, dtype=_LIDAR_DTYPE).reshape(-1, 3).astype(np.float64))
+    return out[0], out[1], out[2]

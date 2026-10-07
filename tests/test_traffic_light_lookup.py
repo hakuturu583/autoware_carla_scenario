@@ -28,7 +28,7 @@ def waypoint(
     is_junction: bool = False,
 ) -> SimpleNamespace:
     """A lane waypoint that knows what comes after it."""
-    node = SimpleNamespace(road_id=road_id, lane_id=lane_id, is_junction=is_junction)
+    node = SimpleNamespace(road_id=road_id, section_id=0, lane_id=lane_id, is_junction=is_junction)
     node.next = lambda _step, node=node: getattr(node, "_following", []) or []
     node._following = following or []
     return node

@@ -15,7 +15,6 @@ __all__ = [
     "RuntimeConfig",
     "ScenarioSpec",
     "default_camera_rig",
-    "default_lidar",
 ]
 
 
@@ -90,11 +89,6 @@ class LidarConfig:
             raise ValueError("LiDAR range and points_per_second must be positive")
         if self.lower_fov_deg >= self.upper_fov_deg:
             raise ValueError("LiDAR lower_fov_deg must be below upper_fov_deg")
-
-
-def default_lidar() -> LidarConfig:
-    """A roof-mounted spinning LiDAR, the shape a T4/nuScenes rig carries."""
-    return LidarConfig()
 
 
 @dataclass(frozen=True)

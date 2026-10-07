@@ -26,6 +26,7 @@ Only the contract lives here. The CARLA implementation is
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -33,6 +34,7 @@ import numpy as np
 from carla_driver_interface.geometry import Pose
 from carla_driver_interface.grpc_api import AvailableCamera, RendererData
 from carla_driver_interface.runtime.control import VehicleCommand
+from carla_driver_interface.runtime.conversions import lidar_points_to_rig
 
 __all__ = [
     "CameraCapture",
@@ -74,20 +76,27 @@ class CameraCapture:
 
 @dataclass(frozen=True)
 class LidarCapture:
-    """One full LiDAR sweep, already in the rig frame.
+    """One full LiDAR sweep: CARLA's raw buffer, put into the rig frame on demand.
 
-    In the rig frame rather than the sensor's for the same reason the ego pose
-    is rig-anchored: the conversion out of CARLA's left-handed sensor frame is
-    the adapter's job, done once through
+    In the rig frame for the same reason the ego pose is rig-anchored: the
+    conversion out of CARLA's left-handed sensor frame is the adapter's job,
+    done through
     :func:`~carla_driver_interface.runtime.conversions.lidar_points_to_rig`.
+    It runs on first read of :attr:`points_xyzi`, so the ticks between policy
+    steps -- whose snapshots are never sent -- do not pay for it.
     """
 
     logical_id: str
     timestamp_us: int
     #: The sensor's mount, in the rig frame.
     pose_in_rig: Pose
-    #: ``[N, 4]`` float32: x, y, z (rig frame, metres) and intensity in [0, 1].
-    points_xyzi: np.ndarray
+    #: ``[N, 4]`` float32 as CARLA reports it: sensor frame, left-handed.
+    points_in_sensor: np.ndarray
+
+    @cached_property
+    def points_xyzi(self) -> np.ndarray:
+        """``[N, 4]`` float32: x, y, z (rig frame, metres) and intensity in [0, 1]."""
+        return lidar_points_to_rig(self.points_in_sensor, self.pose_in_rig)
 
 
 @dataclass(frozen=True)

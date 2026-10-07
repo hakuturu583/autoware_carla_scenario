@@ -26,6 +26,7 @@ from carla_driver_interface.grpc_api import (
     AvailableCamera,
     DynamicState,
     Lane,
+    LidarSweep,
     RendererData,
 )
 from carla_driver_interface.grpc_api.extension import unpack_lidar_points
@@ -121,26 +122,26 @@ class DriveContext:
     #: driven by upstream alpasim, or when the payload could not be parsed.
     renderer_data: RendererData | None
 
-    def lidar_points(self, logical_id: str | None = None) -> np.ndarray | None:
-        """One sweep as ``[N, 4]`` float32 (x, y, z, intensity) in the rig frame.
+    def lidar_sweep(self, logical_id: str | None = None) -> LidarSweep | None:
+        """One sweep as it arrived, with its own timestamp and mount.
 
         ``logical_id`` selects the LiDAR; ``None`` means the only one, and is
         refused when there are several -- silently picking the first would make
         which sensor a policy reads depend on the runtime's configuration
-        order. ``None`` is returned when the runtime sent no sweep at all.
+        order. ``None`` is returned when the runtime sent no such sweep.
         """
         sweeps = list(self.renderer_data.lidar) if self.renderer_data is not None else []
-        if not sweeps:
-            return None
         if logical_id is None:
             if len(sweeps) > 1:
                 names = sorted(sweep.logical_id for sweep in sweeps)
                 raise ValueError(f"several LiDAR sweeps arrived ({names}); name one")
-            return unpack_lidar_points(sweeps[0])
-        for sweep in sweeps:
-            if sweep.logical_id == logical_id:
-                return unpack_lidar_points(sweep)
-        return None
+            return sweeps[0] if sweeps else None
+        return next((sweep for sweep in sweeps if sweep.logical_id == logical_id), None)
+
+    def lidar_points(self, logical_id: str | None = None) -> np.ndarray | None:
+        """:meth:`lidar_sweep`'s points, ``[N, 4]`` float32 x, y, z, intensity, rig frame."""
+        sweep = self.lidar_sweep(logical_id)
+        return None if sweep is None else unpack_lidar_points(sweep)
 
     def lanes(self) -> list[Lane]:
         """The lanes around the ego, nearest first; empty when none were sent."""

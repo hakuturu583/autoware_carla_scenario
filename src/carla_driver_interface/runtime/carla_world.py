@@ -38,7 +38,6 @@ from carla_driver_interface.runtime.conversions import (
     camera_pose_in_rig,
     carla_transform_to_pose,
     carla_vector_to_local,
-    lidar_points_to_rig,
     rig_pose_from_actor_transform,
     seconds_to_us,
     sensor_pose_in_rig,
@@ -88,6 +87,7 @@ def load_carla_module(python_path: str | None = None) -> Any:
 class _RawFrame:
     """An un-encoded CARLA capture, waiting to be picked up by the runtime."""
 
+    frame: int
     timestamp_us: int
     width: int
     height: int
@@ -103,11 +103,39 @@ class _RawSweep:
     points_xyzi: np.ndarray
 
 
-#: How long a tick waits for its own LiDAR sweep. In synchronous mode the
-#: measurement is delivered on the client's sensor thread *after* `tick()`
-#: returns, so reading the queue straight away misses it now and then --
-#: measured on Town10HD_Opt, often enough to fail a 250-step rollout.
-_SWEEP_WAIT_S = 2.0
+#: How long a tick waits for a sensor's measurement of its own frame. In
+#: synchronous mode measurements are delivered on the client's sensor thread
+#: *after* `tick()` returns, so reading a queue straight away misses them now
+#: and then -- measured on Town10HD_Opt, often enough for a LiDAR-reading
+#: driver to fail a 250-step rollout -- and a late camera frame is a stale one.
+_SENSOR_WAIT_S = 2.0
+
+
+def _take_frame(pending: queue.Queue, frame_id: int, sensor: str) -> Any:
+    """The newest queued measurement, waiting for ``frame_id``'s if not yet in.
+
+    Any backlog is discarded: it is older than this tick. When the wait times
+    out, the newest measurement there is (possibly an older frame's) is returned
+    with a warning, rather than none.
+    """
+    newest = None
+    dropped = -1
+    while True:
+        try:
+            newest = pending.get_nowait()
+            dropped += 1
+        except queue.Empty:
+            break
+    try:
+        while newest is None or newest.frame < frame_id:
+            newest = pending.get(timeout=_SENSOR_WAIT_S)
+    except queue.Empty:
+        logger.warning(
+            "no measurement from %s for frame %d within %.1f s", sensor, frame_id, _SENSOR_WAIT_S
+        )
+    if dropped > 0:
+        logger.debug("dropped %d stale measurements from %s", dropped, sensor)
+    return newest
 
 
 class CarlaWorldAdapter:
@@ -322,6 +350,7 @@ class CarlaWorldAdapter:
             try:
                 frames.put(
                     _RawFrame(
+                        frame=int(image.frame),
                         timestamp_us=seconds_to_us(image.timestamp, epoch),
                         width=image.width,
                         height=image.height,
@@ -370,7 +399,7 @@ class CarlaWorldAdapter:
             self._sensors.append(sensor)
 
     def _make_lidar_callback(self, lidar: LidarConfig, sweeps: queue.Queue):
-        """Queue the raw buffer; the frame conversion runs only for the sweep sent."""
+        """Queue the raw buffer; the rig-frame conversion runs only for a sweep sent."""
         epoch = self.config.epoch_offset_us
 
         def callback(measurement: Any) -> None:
@@ -482,7 +511,7 @@ class CarlaWorldAdapter:
             frame_id=int(frame_id),
             timestamp_us=timestamp_us,
             ego=self._ego_state(timestamp_us),
-            captures=self._drain_captures(),
+            captures=self._drain_captures(int(frame_id)),
             lidar=self._drain_sweeps(int(frame_id)),
         )
 
@@ -533,7 +562,7 @@ class CarlaWorldAdapter:
             linear_acceleration_in_rig=vector_local_to_rig(acceleration_local, pose),
         )
 
-    def _drain_captures(self) -> list[CameraCapture]:
+    def _drain_captures(self, frame_id: int) -> list[CameraCapture]:
         """Take the newest frame per camera, discarding any backlog, and encode it.
 
         A backlog means the sensor produced more frames than this policy step
@@ -544,18 +573,9 @@ class CarlaWorldAdapter:
         """
         captures = []
         for logical_id, frames in self._frame_queues.items():
-            newest: _RawFrame | None = None
-            dropped = -1
-            while True:
-                try:
-                    newest = frames.get_nowait()
-                    dropped += 1
-                except queue.Empty:
-                    break
+            newest: _RawFrame | None = _take_frame(frames, frame_id, logical_id)
             if newest is None:
                 continue
-            if dropped > 0:
-                logger.debug("dropped %d stale frames from %s", dropped, logical_id)
             try:
                 image_bytes = encode_bgra(
                     newest.bgra,
@@ -582,41 +602,19 @@ class CarlaWorldAdapter:
         return captures
 
     def _drain_sweeps(self, frame_id: int) -> list[LidarCapture]:
-        """This tick's sweep per LiDAR, in the rig frame; any backlog is stale.
-
-        Waits for the sweep of ``frame_id`` rather than taking whatever has
-        arrived: a policy that reads LiDAR has nothing to plan from without it,
-        and the measurement routinely lands just after the tick returns.
-        """
+        """This tick's sweep per LiDAR; the rig-frame conversion is left to the reader."""
         sweeps = []
         for logical_id, pending in self._sweep_queues.items():
-            newest: _RawSweep | None = None
-            while True:
-                try:
-                    newest = pending.get_nowait()
-                except queue.Empty:
-                    break
-            try:
-                while newest is None or newest.frame < frame_id:
-                    newest = pending.get(timeout=_SWEEP_WAIT_S)
-            except queue.Empty:
-                logger.warning(
-                    "no sweep from %s for frame %d within %.1f s",
-                    logical_id,
-                    frame_id,
-                    _SWEEP_WAIT_S,
+            newest: _RawSweep | None = _take_frame(pending, frame_id, logical_id)
+            if newest is not None:
+                sweeps.append(
+                    LidarCapture(
+                        logical_id=logical_id,
+                        timestamp_us=newest.timestamp_us,
+                        pose_in_rig=self._lidar_poses[logical_id],
+                        points_in_sensor=newest.points_xyzi,
+                    )
                 )
-            if newest is None:
-                continue
-            pose = self._lidar_poses[logical_id]
-            sweeps.append(
-                LidarCapture(
-                    logical_id=logical_id,
-                    timestamp_us=newest.timestamp_us,
-                    pose_in_rig=pose,
-                    points_xyzi=lidar_points_to_rig(newest.points_xyzi, pose),
-                )
-            )
         return sweeps
 
     # -- ground truth ------------------------------------------------------
