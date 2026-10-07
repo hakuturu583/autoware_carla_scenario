@@ -388,15 +388,34 @@ def test_take_frame_discards_backlog_skips_on_timeout_and_accepts_newer():
     assert carla_world._take_frame(pending, 8, "cam", time.monotonic() + 0.05).frame == 9
 
 
+def _ends_at(waypoint, lane_end_x: float, beyond):
+    """Give a stand-in waypoint ``next(d)`` for a lane ending at ``lane_end_x``."""
+
+    def next_(d):
+        x = waypoint.transform.location.x + d
+        if x <= lane_end_x:
+            return [_waypoint(1, 0, -1, x, x, 1.75, 0.0)]
+        return beyond
+
+    waypoint.next = next_
+    return waypoint
+
+
 def test_a_lane_runs_on_to_its_end_past_the_last_sample():
-    first = _waypoint(1, 0, -1, 0.0, 0.0, 1.75, 0.0)
-    end = _waypoint(1, 0, -1, 3.0, 3.0, 1.75, 0.0)
     elsewhere = _waypoint(2, 0, -1, 0.0, 3.0, 1.75, 0.0)
-    first.next_until_lane_end = lambda step: [end, elsewhere]
+    first = _ends_at(_waypoint(1, 0, -1, 0.0, 0.0, 1.75, 0.0), 1.5, [elsewhere])
 
     (lane,) = [
         lane
         for lane in carla_lane_geometries(_StandInMap([first]), 2.0, lambda wp: 0.0)
         if lane.lane_id == "1:0:-1"
     ]
-    np.testing.assert_allclose(lane.centerline[:, 0], [0.0, 3.0])
+    # A one-sample section, kept by finding where it ends.
+    np.testing.assert_allclose(lane.centerline[:, 0], [0.0, 1.5], atol=0.01)
+
+
+def test_a_lane_ending_mid_road_is_read_without_walking_off_it():
+    # A merge: past its end the lane has no successor at all.
+    first = _ends_at(_waypoint(1, 0, -1, 0.0, 0.0, 1.75, 0.0), 0.8, [])
+    (lane,) = carla_lane_geometries(_StandInMap([first]), 2.0, lambda wp: 0.0)
+    np.testing.assert_allclose(lane.centerline[-1, 0], 0.8, atol=0.01)

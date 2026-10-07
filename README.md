@@ -87,6 +87,7 @@ terminated by driver: False
   lane_invasions             0.0000
   route_completion           1.0000
   route_lateral_error_m      0.1687
+  sensor_timeouts            0.0000
   speed_mps                  6.5671
 ```
 

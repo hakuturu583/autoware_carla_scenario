@@ -136,6 +136,10 @@ def _take_frame(pending: queue.Queue, frame_id: int, sensor: str, deadline: floa
         return None
     if dropped > 0:
         logger.debug("dropped %d stale measurements from %s", dropped, sensor)
+    if newest.frame != frame_id:
+        # Only when another client ticks the world: the measurement is newer
+        # than the snapshot it is submitted with.
+        logger.debug("%s delivered frame %d for tick %d", sensor, newest.frame, frame_id)
     return newest
 
 
@@ -303,8 +307,10 @@ class CarlaWorldAdapter:
             blueprint.set_attribute("image_size_x", str(cam.width))
             blueprint.set_attribute("image_size_y", str(cam.height))
             blueprint.set_attribute("fov", str(cam.fov_deg))
-            # One capture per simulator tick; the runtime decides which to send.
-            blueprint.set_attribute("sensor_tick", str(self.config.fixed_delta_s))
+            # One capture per simulator tick (0 = every tick in synchronous
+            # mode; equal to fixed_delta_s, float accumulation can skip one,
+            # and the tick then waits out its whole deadline for a frame).
+            blueprint.set_attribute("sensor_tick", "0.0")
 
             transform = carla.Transform(
                 carla.Location(x=cam.x, y=cam.y, z=cam.z),
@@ -339,7 +345,7 @@ class CarlaWorldAdapter:
     def _make_camera_callback(self, cam: CameraConfig, frames: queue.Queue):
         """Queue the raw frame; encoding happens in :meth:`_drain_captures`.
 
-        With ``sensor_tick == fixed_delta_s`` the sensor fires on every tick but
+        The sensor fires on every tick but
         only the last tick of a policy step is ever submitted, so encoding here
         would compress frames nobody sees -- measured at roughly a fifth of the
         rollout. Copying the buffer is unavoidable (it is only valid for the
@@ -480,6 +486,7 @@ class CarlaWorldAdapter:
         self._route_lane_ids = [carla_lane_key(waypoint)]
         travelled = 0.0
         while travelled < target_length_m:
+            previous = waypoint
             options = waypoint.next(step)
             if not options:
                 break
@@ -487,9 +494,15 @@ class CarlaWorldAdapter:
                 options[self._rng.randrange(len(options))] if len(options) > 1 else options[0]
             )
             points.append(waypoint_to_local(waypoint))
-            lane_id = carla_lane_key(waypoint)
-            if lane_id != self._route_lane_ids[-1]:
-                self._route_lane_ids.append(lane_id)
+            # A connector shorter than the step can lie between two samples;
+            # look in between so it still counts as on the route.
+            for fraction in (0.25, 0.5, 0.75, 1.0):
+                probe = previous.next(step * fraction) if fraction < 1.0 else [waypoint]
+                if len(probe) != 1:
+                    continue
+                lane_id = carla_lane_key(probe[0])
+                if lane_id != self._route_lane_ids[-1]:
+                    self._route_lane_ids.append(lane_id)
             travelled += step
 
         if len(points) < 2:

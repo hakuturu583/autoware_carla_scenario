@@ -89,9 +89,10 @@ message RendererData {
   // them (`RuntimeConfig.send_lanes`): a map-conditioned policy needs them, and
   // nothing else should pay for them.
   repeated Lane lanes = 9;
-  // One sweep per configured LiDAR, in the rig frame. Empty unless
-  // `RuntimeConfig.lidars` configures one. Carried here because the egodriver
-  // contract has no LiDAR submission RPC.
+  // One sweep per configured LiDAR, in the rig frame, except on a tick whose
+  // sweep did not arrive in time (counted in the `sensor_timeouts` metric).
+  // Empty unless `RuntimeConfig.lidars` configures one. Carried here because
+  // the egodriver contract has no LiDAR submission RPC.
   repeated LidarSweep lidar = 10;
 }
 

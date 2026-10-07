@@ -19,6 +19,7 @@ because that is how OpenDRIVE defines them.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -186,6 +187,34 @@ def route_lane_order(lane_ids: Iterable[str]) -> dict[str, int]:
     return order
 
 
+def _lane_end(last: Any, lane_id: str, step_m: float, min_gap_m: float = 0.01) -> Any:
+    """The farthest point of ``lane_id`` within ``step_m`` past ``last``, if any.
+
+    Bisects on ``Waypoint.next(d)``, which returns an empty list rather than
+    failing where a lane ends. Not ``next_until_lane_end``: in LibCarla it
+    walks to the *road's* end and dereferences ``GetNext(...).front()``,
+    which is undefined behaviour on a lane that ends mid-road (a merge, a
+    lane drop) and loops forever on a road whose lane succeeds itself --
+    neither catchable from Python.
+    """
+    step = getattr(last, "next", None)
+    if step is None:
+        return None
+    low, high, end = 0.0, float(step_m), None
+    for _ in range(10):  # ~1 mm at a 2 m resolution
+        middle = 0.5 * (low + high)
+        same = [wp for wp in step(middle) if carla_lane_key(wp) == lane_id]
+        if same:
+            low, end = middle, same[0]
+        else:
+            high = middle
+    if end is None:
+        return None
+    a, b = last.transform.location, end.transform.location
+    gap = math.dist((a.x, a.y, a.z), (b.x, b.y, b.z))
+    return end if gap >= min_gap_m else None
+
+
 def carla_lane_key(waypoint: Any) -> str:
     """The ``Lane.lane_id`` of a CARLA waypoint."""
     return f"{waypoint.road_id}:{waypoint.section_id}:{waypoint.lane_id}"
@@ -214,11 +243,11 @@ def carla_lane_geometries(
             waypoints.reverse()
         # generate_waypoints samples every `resolution_m`, so a lane stops up to
         # that short of its end and a section shorter than it is one point.
-        # Walking on to the lane end closes the gap to the next section and
-        # keeps short connectors in the graph.
-        tail = getattr(waypoints[-1], "next_until_lane_end", None)
-        if tail is not None:
-            waypoints.extend(wp for wp in tail(resolution_m) if carla_lane_key(wp) == lane_id)
+        # Finding the end closes the gap to the next section and keeps short
+        # connectors in the graph.
+        end = _lane_end(waypoints[-1], lane_id, resolution_m)
+        if end is not None:
+            waypoints.append(end)
         if len(waypoints) < 2:
             continue
         centre, left, right = [], [], []

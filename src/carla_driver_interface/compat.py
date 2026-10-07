@@ -184,7 +184,8 @@ COMPAT_ENTRIES: tuple[CompatEntry, ...] = (
         "SensorsimService.render_lidar produces point clouds, but the egodriver "
         "contract has no LiDAR submission RPC to deliver them to a driver",
         "Opt-in (RuntimeConfig.lidars): one full sweep per configured sensor rides in "
-        "RendererData.lidar as rig-frame float32 x, y, z, intensity",
+        "RendererData.lidar as rig-frame float32 x, y, z, intensity (absent on a tick whose "
+        "sweep arrived too late, counted as sensor_timeouts)",
         CompatLevel.COMPAT_LEVEL_EXTENSION,
         "driver_extension.v0.LidarSweep",
     ),

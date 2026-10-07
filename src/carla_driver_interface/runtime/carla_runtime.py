@@ -237,13 +237,15 @@ class CarlaRuntime:
     def _drive_loop(self, stub: EgodriverServiceStub, session_uuid: str) -> tuple[int, bool]:
         # Priming: let physics settle and the first frames arrive before the
         # driver sees anything, the way alpasim's replay phase does.
+        saw_a_frame = False
         for _ in range(max(0, self.config.warmup_ticks)):
             self._record_tick(self.world.tick())
+            saw_a_frame = saw_a_frame or bool(self._latest and self._latest.captures)
         if self._latest is None:
             self._record_tick(self.world.tick())
         assert self._latest is not None  # a tick always produces a snapshot
 
-        if self.config.cameras and not self._latest.captures:
+        if self.config.cameras and not saw_a_frame and not self._latest.captures:
             logger.warning(
                 "no camera frame arrived during %d warmup ticks despite %d configured "
                 "camera(s); the driver will be asked to plan without images",
