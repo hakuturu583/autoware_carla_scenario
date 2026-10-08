@@ -145,15 +145,20 @@ def pack_lane_polylines(
     centerline: np.ndarray, left_boundary: np.ndarray, right_boundary: np.ndarray
 ) -> dict:
     """``Lane`` field values for three ``[N, 3]`` rig-frame polylines of one length."""
-    arrays = [_pack_rows(a, 3) for a in (centerline, left_boundary, right_boundary)]
-    if any(a is None for a in arrays) or len({a.shape for a in arrays}) != 1:
+    centre, left, right = (_pack_rows(a, 3) for a in (centerline, left_boundary, right_boundary))
+    if (
+        centre is None
+        or left is None
+        or right is None
+        or not centre.shape == left.shape == right.shape
+    ):
         shapes = [np.shape(a) for a in (centerline, left_boundary, right_boundary)]
         raise ValueError(f"lane polylines must share one [N, 3] shape; got {shapes}")
     return {
-        "num_points": int(arrays[0].shape[0]),
-        "centerline_xyz": arrays[0].tobytes(),
-        "left_boundary_xyz": arrays[1].tobytes(),
-        "right_boundary_xyz": arrays[2].tobytes(),
+        "num_points": int(centre.shape[0]),
+        "centerline_xyz": centre.tobytes(),
+        "left_boundary_xyz": left.tobytes(),
+        "right_boundary_xyz": right.tobytes(),
     }
 
 
