@@ -237,15 +237,12 @@ class CarlaRuntime:
     def _drive_loop(self, stub: EgodriverServiceStub, session_uuid: str) -> tuple[int, bool]:
         # Priming: let physics settle and the first frames arrive before the
         # driver sees anything, the way alpasim's replay phase does.
-        saw_a_frame = False
-        for _ in range(max(0, self.config.warmup_ticks)):
-            self._record_tick(self.world.tick())
-            saw_a_frame = saw_a_frame or bool(self._latest and self._latest.captures)
-        if self._latest is None:
-            self._record_tick(self.world.tick())
+        for _ in range(max(0, self.config.warmup_ticks - 1)):
+            self._record_tick(self.world.tick(capture=False))
+        self._record_tick(self.world.tick())
         assert self._latest is not None  # a tick always produces a snapshot
 
-        if self.config.cameras and not saw_a_frame and not self._latest.captures:
+        if self.config.cameras and not self._latest.captures:
             logger.warning(
                 "no camera frame arrived during %d warmup ticks despite %d configured "
                 "camera(s); the driver will be asked to plan without images",
@@ -309,8 +306,6 @@ class CarlaRuntime:
         thing every adapter shares instead of one more each must remember.
         """
         data = self.world.environment(snapshot)
-        # Sweeps come from the snapshot, once; an adapter's own would duplicate them.
-        data.ClearField("lidar")
         for sweep in snapshot.lidar:
             data.lidar.append(
                 pack_lidar_sweep(
@@ -325,8 +320,9 @@ class CarlaRuntime:
     def _advance(self, command: VehicleCommand) -> None:
         """Apply actuation and run the simulator up to the next policy step."""
         self.world.apply_control(command)
-        for _ in range(self.config.ticks_per_policy_step):
-            self._record_tick(self.world.tick())
+        last = self.config.ticks_per_policy_step - 1
+        for tick in range(self.config.ticks_per_policy_step):
+            self._record_tick(self.world.tick(capture=tick == last))
 
     def _record_tick(self, snapshot: WorldSnapshot) -> None:
         """Fold one simulator tick into the runtime's view of the world."""

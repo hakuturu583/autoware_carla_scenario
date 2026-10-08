@@ -346,10 +346,10 @@ class CarlaWorldAdapter:
     def _make_camera_callback(self, cam: CameraConfig, frames: queue.Queue):
         """Queue the raw frame; :meth:`_drain_captures` takes this tick's and encodes it.
 
-        The sensor fires on every tick, and every tick's newest frame is
-        encoded, though only a policy step's last tick is submitted. Copying the
-        buffer is unavoidable (it is only valid for the duration of the
-        callback).
+        The sensor fires on every tick, but only a capturing tick -- a policy
+        step's last -- takes and encodes a frame; the backlog before it is
+        dropped unencoded. Copying the buffer is unavoidable (it is only valid
+        for the duration of the callback).
         """
         epoch = self.config.epoch_offset_us
 
@@ -494,21 +494,16 @@ class CarlaWorldAdapter:
                 options[self._rng.randrange(len(options))] if len(options) > 1 else options[0]
             )
             points.append(waypoint_to_local(waypoint))
-            # A connector shorter than the step can lie between two samples;
-            # look in between so it still counts as on the route.
-            for fraction in (0.25, 0.5, 0.75, 1.0):
-                probe = (
-                    self._on_the_way(
+            # A connector shorter than the step can lie between two samples of
+            # different lanes; look in between so it still counts as on the route.
+            if carla_lane_key(waypoint) != carla_lane_key(previous):
+                for fraction in (0.25, 0.5, 0.75):
+                    probe = self._on_the_way(
                         previous.next(step * fraction), waypoint, step * (1 - fraction)
                     )
-                    if fraction < 1.0
-                    else waypoint
-                )
-                if probe is None:
-                    continue
-                lane_id = carla_lane_key(probe)
-                if lane_id != self._route_lane_ids[-1]:
-                    self._route_lane_ids.append(lane_id)
+                    if probe is not None:
+                        self._add_route_lane(probe)
+            self._add_route_lane(waypoint)
             travelled += step
 
         if len(points) < 2:
@@ -517,6 +512,11 @@ class CarlaWorldAdapter:
                 "connected lanes at that location"
             )
         return np.stack(points)
+
+    def _add_route_lane(self, waypoint: Any) -> None:
+        lane_id = carla_lane_key(waypoint)
+        if lane_id != self._route_lane_ids[-1]:
+            self._route_lane_ids.append(lane_id)
 
     @staticmethod
     def _on_the_way(options: list, chosen: Any, remaining_m: float) -> Any:
@@ -538,7 +538,7 @@ class CarlaWorldAdapter:
 
     # -- stepping ----------------------------------------------------------
 
-    def tick(self) -> WorldSnapshot:
+    def tick(self, capture: bool = True) -> WorldSnapshot:
         if self._pending_control is not None:
             self._ego.apply_control(self._to_carla_control(self._pending_control))
             self._pending_control = None
@@ -553,8 +553,8 @@ class CarlaWorldAdapter:
             frame_id=int(frame_id),
             timestamp_us=timestamp_us,
             ego=self._ego_state(timestamp_us),
-            captures=self._drain_captures(int(frame_id), deadline),
-            lidar=self._drain_sweeps(int(frame_id), deadline),
+            captures=self._drain_captures(int(frame_id), deadline) if capture else [],
+            lidar=self._drain_sweeps(int(frame_id), deadline) if capture else [],
         )
 
     def apply_control(self, command: VehicleCommand) -> None:

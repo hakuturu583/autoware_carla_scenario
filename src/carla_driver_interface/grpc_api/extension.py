@@ -87,6 +87,22 @@ def _unpack(payload: bytes, message_type: type, field: str):
     return message
 
 
+def _pack_rows(rows: np.ndarray, columns: int) -> np.ndarray | None:
+    """``rows`` as contiguous wire floats, or ``None`` unless it is ``[N, columns]``."""
+    packed = np.ascontiguousarray(rows, dtype=_WIRE_DTYPE)
+    return packed if packed.ndim == 2 and packed.shape[1] == columns else None
+
+
+def _unpack_rows(payload: bytes, num_rows: int, columns: int, what: str) -> np.ndarray:
+    """``num_rows`` x ``columns`` wire floats; raises when the payload's size disagrees."""
+    expected = int(num_rows) * columns * _WIRE_DTYPE.itemsize
+    if len(payload) != expected:
+        raise ValueError(
+            f"{what} declares {num_rows} points ({expected} bytes) but carries {len(payload)} bytes"
+        )
+    return np.frombuffer(payload, dtype=_WIRE_DTYPE).reshape(-1, columns)
+
+
 def pack_lidar_sweep(
     logical_id: str,
     timestamp_us: int,
@@ -94,11 +110,11 @@ def pack_lidar_sweep(
     rig_to_lidar: Pose,
 ) -> LidarSweep:
     """Build one ``LidarSweep`` from ``[N, 4]`` rig-frame points."""
-    points = np.ascontiguousarray(points_xyzi_in_rig, dtype=_WIRE_DTYPE)
-    if points.ndim != 2 or points.shape[1] != LIDAR_POINT_COLUMNS:
+    points = _pack_rows(points_xyzi_in_rig, LIDAR_POINT_COLUMNS)
+    if points is None:
         raise ValueError(
             f"LiDAR points must be [N, {LIDAR_POINT_COLUMNS}] (x, y, z, intensity); "
-            f"got shape {points.shape}"
+            f"got shape {np.shape(points_xyzi_in_rig)}"
         )
     return LidarSweep(
         logical_id=logical_id,
@@ -116,27 +132,23 @@ def unpack_lidar_points(sweep: LidarSweep) -> np.ndarray:
     unlike the outer ``renderer_data`` bytes, a sweep that parsed as one is ours,
     and a short buffer means it was corrupted, not that it belongs to a peer.
     """
-    expected = int(sweep.num_points) * LIDAR_POINT_COLUMNS * _WIRE_DTYPE.itemsize
-    if len(sweep.points_xyzi) != expected:
-        raise ValueError(
-            f"LiDAR sweep {sweep.logical_id!r} declares {sweep.num_points} points "
-            f"({expected} bytes) but carries {len(sweep.points_xyzi)} bytes"
-        )
-    flat = np.frombuffer(sweep.points_xyzi, dtype=_WIRE_DTYPE)
-    return flat.reshape(-1, LIDAR_POINT_COLUMNS).astype(np.float32, copy=True)
+    points = _unpack_rows(
+        sweep.points_xyzi,
+        sweep.num_points,
+        LIDAR_POINT_COLUMNS,
+        f"LiDAR sweep {sweep.logical_id!r}",
+    )
+    return points.astype(np.float32, copy=True)
 
 
 def pack_lane_polylines(
     centerline: np.ndarray, left_boundary: np.ndarray, right_boundary: np.ndarray
 ) -> dict:
     """``Lane`` field values for three ``[N, 3]`` rig-frame polylines of one length."""
-    arrays = [
-        np.ascontiguousarray(a, dtype=_WIRE_DTYPE)
-        for a in (centerline, left_boundary, right_boundary)
-    ]
-    shapes = {a.shape for a in arrays}
-    if len(shapes) != 1 or len(arrays[0].shape) != 2 or arrays[0].shape[1] != 3:
-        raise ValueError(f"lane polylines must share one [N, 3] shape; got {sorted(shapes)}")
+    arrays = [_pack_rows(a, 3) for a in (centerline, left_boundary, right_boundary)]
+    if any(a is None for a in arrays) or len({a.shape for a in arrays}) != 1:
+        shapes = [np.shape(a) for a in (centerline, left_boundary, right_boundary)]
+        raise ValueError(f"lane polylines must share one [N, 3] shape; got {shapes}")
     return {
         "num_points": int(arrays[0].shape[0]),
         "centerline_xyz": arrays[0].tobytes(),
@@ -151,14 +163,10 @@ def lane_polylines(lane: Lane) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     Raises when a polyline's size disagrees with ``num_points``, for the same
     reason :func:`unpack_lidar_points` does.
     """
-    expected = int(lane.num_points) * 3 * _WIRE_DTYPE.itemsize
-    out = []
-    for name in ("centerline_xyz", "left_boundary_xyz", "right_boundary_xyz"):
-        payload = getattr(lane, name)
-        if len(payload) != expected:
-            raise ValueError(
-                f"lane {lane.lane_id!r}: {name} carries {len(payload)} bytes, "
-                f"{lane.num_points} points need {expected}"
-            )
-        out.append(np.frombuffer(payload, dtype=_WIRE_DTYPE).reshape(-1, 3).astype(np.float64))
-    return out[0], out[1], out[2]
+    centre, left, right = (
+        _unpack_rows(
+            getattr(lane, name), lane.num_points, 3, f"lane {lane.lane_id!r} {name}"
+        ).astype(np.float64)
+        for name in ("centerline_xyz", "left_boundary_xyz", "right_boundary_xyz")
+    )
+    return centre, left, right

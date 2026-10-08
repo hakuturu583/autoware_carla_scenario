@@ -33,7 +33,7 @@ from carla_driver_interface.runtime.conversions import (
     sensor_pose_in_rig,
 )
 from carla_driver_interface.runtime.images import encode_rgb
-from carla_driver_interface.runtime.lanes import LaneGeometry, lanes_in_rig, route_lane_order
+from carla_driver_interface.runtime.lanes import LaneGeometry, lanes_in_rig
 from carla_driver_interface.runtime.world import (
     CameraCapture,
     EgoState,
@@ -166,7 +166,7 @@ class FakeWorld:
     def apply_control(self, command: VehicleCommand) -> None:
         self._command = command
 
-    def tick(self) -> WorldSnapshot:
+    def tick(self, capture: bool = True) -> WorldSnapshot:
         dt = self.config.fixed_delta_s
         self._integrate(dt)
 
@@ -182,8 +182,10 @@ class FakeWorld:
             frame_id=self._frame_id,
             timestamp_us=timestamp_us,
             ego=ego,
-            captures=self._captures(timestamp_us),
-            lidar=[
+            captures=self._captures(timestamp_us) if capture else [],
+            lidar=[]
+            if not capture
+            else [
                 LidarCapture(
                     logical_id=lidar.logical_id,
                     timestamp_us=timestamp_us,
@@ -208,7 +210,7 @@ class FakeWorld:
                     self._lanes,
                     snapshot.ego.pose_local_to_rig,
                     self.config.lane_horizon_m,
-                    route_order=route_lane_order([FAKE_ROUTE_LANE_ID]),
+                    route_order={FAKE_ROUTE_LANE_ID: 0},
                 )
                 if self.config.send_lanes
                 else []

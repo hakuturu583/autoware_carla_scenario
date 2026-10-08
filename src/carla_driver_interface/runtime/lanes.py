@@ -19,7 +19,6 @@ because that is how OpenDRIVE defines them.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -29,7 +28,7 @@ import numpy as np
 from carla_driver_interface.geometry import Pose
 from carla_driver_interface.grpc_api import Lane, LaneMarkingType, TrafficLightState
 from carla_driver_interface.grpc_api.extension import pack_lane_polylines
-from carla_driver_interface.runtime.conversions import carla_vector_to_local
+from carla_driver_interface.runtime.conversions import carla_vector_to_local, waypoint_to_local
 
 __all__ = [
     "LaneGeometry",
@@ -85,12 +84,9 @@ class LaneGeometry:
     bounds: tuple[np.ndarray, float] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        shapes = {
-            np.shape(self.centerline),
-            np.shape(self.left_boundary),
-            np.shape(self.right_boundary),
-        }
-        if len(shapes) != 1 or len(next(iter(shapes))) != 2 or next(iter(shapes))[1] != 3:
+        shape = np.shape(self.centerline)
+        same = np.shape(self.left_boundary) == shape == np.shape(self.right_boundary)
+        if not same or len(shape) != 2 or shape[1] != 3:
             raise ValueError(f"lane {self.lane_id!r}: polylines must share one [N, 3] shape")
         # A bounding circle, so a lane far beyond the horizon is rejected
         # without measuring each of its stations every step.
@@ -187,7 +183,11 @@ def route_lane_order(lane_ids: Iterable[str]) -> dict[str, int]:
     return order
 
 
-def _lane_end(last: Any, lane_id: str, step_m: float, min_gap_m: float = 0.01) -> Any:
+#: A found lane end closer than this to the last sample adds nothing.
+_MIN_LANE_END_GAP_M = 0.01
+
+
+def _lane_end(last: Any, lane_id: str, step_m: float) -> Any:
     """The farthest point of ``lane_id`` within ``step_m`` past ``last``, if any.
 
     Bisects on ``Waypoint.next(d)``, which returns an empty list rather than
@@ -208,9 +208,8 @@ def _lane_end(last: Any, lane_id: str, step_m: float, min_gap_m: float = 0.01) -
             high = middle
     if end is None:
         return None
-    a, b = last.transform.location, end.transform.location
-    gap = math.dist((a.x, a.y, a.z), (b.x, b.y, b.z))
-    return end if gap >= min_gap_m else None
+    gap = float(np.linalg.norm(waypoint_to_local(end) - waypoint_to_local(last)))
+    return end if gap >= _MIN_LANE_END_GAP_M else None
 
 
 def carla_lane_key(waypoint: Any) -> str:
@@ -250,10 +249,9 @@ def carla_lane_geometries(
             continue
         centre, left, right = [], [], []
         for waypoint in waypoints:
-            location = waypoint.transform.location
             right_vector = waypoint.transform.get_right_vector()
             half = 0.5 * float(waypoint.lane_width)
-            c = carla_vector_to_local(location.x, location.y, location.z)
+            c = waypoint_to_local(waypoint)
             # The right vector is in CARLA's frame; mirrored like any vector.
             r = carla_vector_to_local(right_vector.x, right_vector.y, right_vector.z)
             centre.append(c)

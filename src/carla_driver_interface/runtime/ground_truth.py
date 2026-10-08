@@ -19,6 +19,7 @@ is the authority to create any of them.
 
 from __future__ import annotations
 
+import functools
 from typing import Any
 
 import numpy as np
@@ -103,13 +104,10 @@ class CarlaGroundTruth:
         self._map = carla_map
         self.config = config
         self._map_name = map_name
-        #: Lane -> lights governing it, built on first use; lights do not move.
-        self._stop_lines: dict[tuple[int, int], list[Any]] | None = None
         #: Light id -> where to stop for it, in the local frame. Same reason.
         self._stop_line_points_by_light: dict[int, list[np.ndarray]] = {}
         self._route_order = route_lane_order(route_lane_ids or [])
         self._lane_geometries: list[LaneGeometry] | None = None
-        self._lights_by_lane_id: dict[str, list[Any]] | None = None
 
     def read(self, snapshot: WorldSnapshot) -> RendererData:
         light = self._governing_traffic_light()
@@ -138,10 +136,12 @@ class CarlaGroundTruth:
                 self.config.lane_resolution_m,
                 speed_limit_for=lambda wp: limits.get(int(wp.road_id), 0.0),
             )
-        lights = {
-            lane_id: self._traffic_light_state(governing[0])
-            for lane_id, governing in self._lights_by_lane().items()
+        # Each light once, however many lanes it governs.
+        _, light_by_lane_id = self._light_index
+        states = {
+            id(light): self._traffic_light_state(light) for light in light_by_lane_id.values()
         }
+        lights = {lane_id: states[id(light)] for lane_id, light in light_by_lane_id.items()}
         return lanes_in_rig(
             self._lane_geometries,
             ego.pose_local_to_rig,
@@ -150,27 +150,22 @@ class CarlaGroundTruth:
             traffic_lights=lights,
         )
 
-    def _lights_by_lane(self) -> dict[str, list[Any]]:
-        """Which light's stop line lies on which lane, by ``Lane.lane_id``."""
-        if self._lights_by_lane_id is None:
-            self._index_lights()
-        assert self._lights_by_lane_id is not None
-        return self._lights_by_lane_id
+    @functools.cached_property
+    def _light_index(self) -> tuple[dict[tuple[int, int], list[Any]], dict[str, Any]]:
+        """Both light indexes, from one scan, on first use -- lights do not move.
 
-    def _index_lights(self) -> None:
-        """Both light indexes, from one scan -- lights do not move.
-
-        By ``(road_id, lane_id)`` for the walk down the ego's lane, and by the
-        section-qualified ``Lane.lane_id`` for the lanes sent to the policy:
-        one source, so the two cannot disagree about which light a lane has.
+        By ``(road_id, lane_id)``, every light, for the walk down the ego's
+        lane; by the section-qualified ``Lane.lane_id``, the first, for the
+        lanes sent to the policy. One source, so the two cannot disagree about
+        which light a lane has.
         """
         by_road_lane: dict[tuple[int, int], list[Any]] = {}
-        by_lane_id: dict[str, list[Any]] = {}
+        by_lane_id: dict[str, Any] = {}
         for light in self._world.get_actors().filter("traffic.traffic_light*"):
             for waypoint in light.get_stop_waypoints():
                 by_road_lane.setdefault((waypoint.road_id, waypoint.lane_id), []).append(light)
-                by_lane_id.setdefault(carla_lane_key(waypoint), []).append(light)
-        self._stop_lines, self._lights_by_lane_id = by_road_lane, by_lane_id
+                by_lane_id.setdefault(carla_lane_key(waypoint), light)
+        return by_road_lane, by_lane_id
 
     def _speed_limits_by_road(self) -> dict[int, float]:
         """Posted limits by road id, in m/s, from the map's speed signs.
@@ -289,18 +284,11 @@ class CarlaGroundTruth:
         """
         if not lanes:
             return []
-        stop_lines = self._stop_lines_by_lane()
+        stop_lines, _ = self._light_index
         found: list[Any] = []
         for lane in lanes:
             found.extend(stop_lines.get(lane, ()))
         return found
-
-    def _stop_lines_by_lane(self) -> dict[tuple[int, int], list[Any]]:
-        """Which light governs which lane, built once -- lights do not move."""
-        if self._stop_lines is None:
-            self._index_lights()
-        assert self._stop_lines is not None
-        return self._stop_lines
 
     def _weather(self) -> Weather:
         weather = self._world.get_weather()

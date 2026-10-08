@@ -190,6 +190,24 @@ def test_intermediate_ticks_are_all_delivered():
     assert set(growth) == {2}, f"unexpected pose growth per step: {growth}"
 
 
+def test_only_the_submitted_tick_collects_sensors():
+    """The tick before a policy step's last is never submitted: no capture."""
+
+    class Counting(FakeWorld):
+        def __init__(self, *args):
+            super().__init__(*args)
+            self.captured: list[bool] = []
+
+        def tick(self, capture: bool = True):
+            self.captured.append(capture)
+            return super().tick(capture)
+
+    _, world = run(_Spy(), Counting, max_steps=5, fixed_delta_s=0.05, policy_timestep_s=0.1)
+    # Warmup ends on a capturing tick; then each step is (skip, capture).
+    steps = world.captured[-10:]
+    assert steps == [False, True] * 5
+
+
 def test_renderer_data_extension_is_populated():
     spy = _Spy()
     run(spy, max_steps=5)

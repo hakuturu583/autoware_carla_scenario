@@ -142,8 +142,13 @@ class WorldAdapter(Protocol):
     def setup(self) -> WorldSetup:
         """Build the scenario and return its description. Called once."""
 
-    def tick(self) -> WorldSnapshot:
-        """Advance by one ``fixed_delta_s`` and collect sensor output."""
+    def tick(self, capture: bool = True) -> WorldSnapshot:
+        """Advance by one ``fixed_delta_s``; with ``capture``, collect sensor output.
+
+        Without it the snapshot has no captures or sweeps: a policy step only
+        submits its last tick, so the ticks before it need not wait for, or
+        encode, measurements nobody reads.
+        """
 
     def apply_control(self, command: VehicleCommand) -> None:
         """Latch actuation, applied on the next :meth:`tick`."""
