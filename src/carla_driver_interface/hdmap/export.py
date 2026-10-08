@@ -8,10 +8,11 @@ driver reads, and writes the result under ``<map_dir>/<map_id>/``. Each step
 then carries only what changes -- the traffic lights -- which
 :mod:`carla_driver_interface.hdmap.files` resolves against these files.
 
-Every set also holds the OpenDRIVE itself and roadgen's IR, and each format its
-roadgen trace: the IR keeps OpenDRIVE's road and signal ids, and the trace says
-which element of the format each IR element became, which is how a light named
-by OpenDRIVE finds its stop line in, say, a Lanelet2 map.
+Every set also holds the OpenDRIVE itself, roadgen's IR and two kinds of
+roadgen trace: the read trace says which IR element each OpenDRIVE road, lane
+and signal became, and each format's trace which element of the format each IR
+element became. Chained, they are how a light named by OpenDRIVE finds its
+stop line in, say, a Lanelet2 map.
 
 Needs roadgen (``pip install 'carla-driver-interface[map]'``), imported only
 when a map is written: a driver reading the files does not need it.
@@ -37,6 +38,10 @@ logger = logging.getLogger(__name__)
 MANIFEST_FILE = "manifest.json"
 SOURCE_FILE = "map.xodr"
 IR_FILE = "map.ir.json"
+#: What roadgen actually read: the source with CARLA's departures fixed. Kept,
+#: because the read trace names it and records its digest.
+READ_FILE = "map.roadgen.xodr"
+READ_TRACE_FILE = "map.roadgen.xodr.read.trace.json"
 
 #: Where each format is written, relative to the set's directory.
 _FORMAT_PATHS = {
@@ -129,14 +134,14 @@ def export_map(
     with tempfile.TemporaryDirectory(dir=root, prefix=f".{map_id}.") as scratch:
         out = Path(scratch)
         (out / SOURCE_FILE).write_text(opendrive, encoding="utf-8")
-        sanitized = out / ".sanitized.xodr"
+        sanitized = out / READ_FILE
         sanitized.write_text(sanitize_opendrive(opendrive), encoding="utf-8")
         world_map = roadgen.read_opendrive(str(sanitized))
-        sanitized.unlink()
         for warning in world_map.read_warnings():
             logger.info("roadgen read %s: %s", map_name, warning)
 
         world_map.export_ir(str(out / IR_FILE))
+        world_map.write_read_trace(str(out / READ_TRACE_FILE))
         written = {name: _export(world_map, name, out) for name in formats}
         manifest = {
             "map_id": map_id,
@@ -144,6 +149,7 @@ def export_map(
             "roadgen_version": getattr(roadgen, "__version__", ""),
             "source": SOURCE_FILE,
             "ir": IR_FILE,
+            "read_trace": READ_TRACE_FILE,
             "formats": written,
         }
         (out / MANIFEST_FILE).write_text(json.dumps(manifest, indent=1), encoding="utf-8")

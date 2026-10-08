@@ -6,17 +6,16 @@ the format a driver reads and turns the traffic lights each step carries --
 named by OpenDRIVE -- into :class:`StopLine` records named by that format's
 own elements, so a driver never has to know OpenDRIVE was involved.
 
-The translation runs through two files the export writes beside the map:
-roadgen's IR, whose ids keep OpenDRIVE's (``road/<road id>``; a signal is
-``object/<id>``, or ``object/<rest>`` when its name is ``object/<rest>``), and
-the format's trace, which links each IR element to the elements it became.
+The translation runs through two roadgen traces the export writes beside the
+map: the read trace, from each OpenDRIVE lane (``lane:<road>/<section>/<lane>``)
+and signal (``signal:<id>``) to the IR element it became, and the format's
+trace, from each IR element to the elements of the format it became. The IR
+itself says which rules name a light.
 """
 
 from __future__ import annotations
 
 import json
-import re
-import xml.etree.ElementTree as ElementTree
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -100,8 +99,8 @@ class MapFiles:
 
         ir = json.loads((self.directory / manifest["ir"]).read_text(encoding="utf-8"))
         trace = json.loads((self.directory / written[format]["trace"]).read_text(encoding="utf-8"))
-        self._lanes = _ir_lanes(ir)
-        self._light_objects = _ir_light_objects(ir, self.opendrive_path)
+        read = json.loads((self.directory / manifest["read_trace"]).read_text(encoding="utf-8"))
+        self._from_opendrive = _read_trace(read)
         self._rules_by_object = _ir_rules_by_object(ir)
         self._refs = _trace_refs(trace)
         self._lane_role = _LANE_ROLES.get(format)
@@ -115,12 +114,14 @@ class MapFiles:
         """Each light's stop points as stop lines in this format, in arrival order."""
         stop_lines = []
         for light in lights:
-            objects = self._light_objects.get(light.opendrive_id, ())
+            objects = self._from_opendrive.get(f"signal:{light.opendrive_id}", ())
             rules = dict.fromkeys(r for obj in objects for r in self._rules_by_object.get(obj, ()))
             rule_ids = tuple(ref for rule in rules for ref in self._ids(rule))
             light_ids = tuple(ref for obj in objects for ref in self._ids(obj))
             for point in light.stop_points:
-                lane = self._lanes.get((point.road_id, point.section_id, point.lane_id))
+                lanes = self._from_opendrive.get(
+                    f"lane:{point.road_id}/{point.section_id}/{point.lane_id}", ()
+                )
                 p = point.position_local
                 stop_lines.append(
                     StopLine(
@@ -130,7 +131,9 @@ class MapFiles:
                         road_id=point.road_id,
                         section_id=point.section_id,
                         lane_id=point.lane_id,
-                        lane_ids=self._ids(lane, self._lane_role) if lane else (),
+                        lane_ids=tuple(
+                            ref for lane in lanes for ref in self._ids(lane, self._lane_role)
+                        ),
                         rule_ids=rule_ids,
                         light_ids=light_ids,
                     )
@@ -144,42 +147,13 @@ class MapFiles:
         )
 
 
-def _ir_lanes(ir: dict) -> dict[tuple[int, int, int], str]:
-    """``(road id, section index, OpenDRIVE lane id)`` -> IR lane id.
-
-    The IR numbers a lane by side and ordinal outward from the reference line;
-    OpenDRIVE by sign and magnitude: right of the line is negative.
-    """
-    lanes = {}
-    for lane in ir.get("lanes", ()):
-        road = lane["road"].split("/", 1)[1]
-        if not road.lstrip("-").isdigit():
-            continue
-        ordinal = int(lane["ordinal"])
-        lane_id = -ordinal if lane["side"] == "right" else ordinal
-        lanes[(int(road), int(lane["section"]), lane_id)] = lane["id"]
-    return lanes
-
-
-def _ir_light_objects(ir: dict, opendrive: Path) -> dict[str, list[str]]:
-    """OpenDRIVE signal id -> the IR traffic-light objects read from it.
-
-    roadgen names an object after the signal's ``name`` when that reads
-    ``object/<rest>`` (as roadgen's own OpenDRIVE does) and after its ``id``
-    otherwise, with ``-<n>`` appended on a clash; the same rule is applied to
-    the source document here.
-    """
-    lights = {obj["id"] for obj in ir.get("objects", ()) if obj.get("kind") == "traffic_light"}
-    found: dict[str, list[str]] = {}
-    for signal in ElementTree.parse(opendrive).getroot().iter("signal"):
-        signal_id = signal.get("id", "")
-        name = signal.get("name") or ""
-        wanted = name[len("object/") :] if name.startswith("object/") else signal_id
-        pattern = re.compile(rf"object/{re.escape(wanted)}(-\d+)?")
-        matches = sorted(obj for obj in lights if pattern.fullmatch(obj))
-        if matches:
-            found[signal_id] = matches
-    return found
+def _read_trace(trace: dict) -> dict[str, list[str]]:
+    """OpenDRIVE element (``signal:943``, ``lane:21/0/-1``) -> the IR elements it became."""
+    became: dict[str, list[str]] = defaultdict(list)
+    for link in trace.get("links", ()):
+        if link["ir"] not in became[link["ref"]]:
+            became[link["ref"]].append(link["ir"])
+    return became
 
 
 def _ir_rules_by_object(ir: dict) -> dict[str, list[str]]:
