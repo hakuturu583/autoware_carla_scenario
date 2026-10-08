@@ -13,8 +13,9 @@ it.
   [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) and printed by
   `carla-driver-interface compat-report`**, and a test fails if the two drift
   apart.
-- Four dependencies: `alpasim-grpc`, `grpcio`, `numpy`, `pillow`. `carla` is an
-  optional extra.
+- Four dependencies: `grpcio`, `protobuf`, `numpy`, `pillow`. alpasim's
+  egodriver protos are vendored and compiled in. `carla` (the runtime) and
+  `roadgen` (writing the map) are optional extras.
 
 ```
 CarlaRuntime ──── egodriver.EgodriverService (same as upstream) ────► Driver
@@ -54,7 +55,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full picture.
 
 ## Setup
 
-Python 3.11 or 3.12 (the `alpasim-grpc` constraint).
+Python 3.10 to 3.12. 3.10 is Autoware's; `alpasim-grpc` requires 3.11, which
+is why its protos are vendored rather than depended on.
 
 ```console
 $ uv sync --extra dev

@@ -31,15 +31,15 @@ The vocabulary:
 | Area | alpasim | carla_driver_interface |
 |---|---|---|
 | **Egodriver service** | 8 RPCs on `egodriver.EgodriverService` | All 8 implemented by inheriting the upstream generated servicer. Service path `/egodriver.EgodriverService/*` and message types are the same |
-| **Message types** | Defined in `alpasim_grpc` | The same package, as a rev-pinned git dependency. Not one message is redefined |
+| **Message types** | Defined in `alpasim_grpc` | Upstream's `.proto` files, vendored verbatim at a pinned revision and compiled in (`proto/README.md`). Not one message is redefined |
 | **Observation ordering** | Images, egomotion, route and ground truth all land before `drive()`, enforced by an explicit barrier | Same order, same barrier |
 | **Response frame** | `DriveResponse.trajectory` holds `local -> rig_est`, led by the ego pose at `time_now_us` | Identical: the servicer anchors the plan on the ego pose at `time_now_us` |
 | **Early termination** | `DriveResponse.terminate_session` ends the rollout immediately | Honoured: the loop returns without stepping further |
-| **API version** | `get_version` reports `alpasim_grpc.API_VERSION_MESSAGE` | Forwarded verbatim; the runtime compares it at startup and warns on a mismatch |
+| **API version** | `get_version` reports `alpasim_grpc.API_VERSION_MESSAGE` | The release at the vendored revision (0.55.0); the runtime compares it at startup and warns on a mismatch |
 | **Rollout results** | `SimulationReturn.RolloutReturn` | The same message is produced, so alpasim-side tooling can read a CARLA rollout unchanged |
 
 **Why this cannot quietly break.** The servicer inherits
-`alpasim_grpc.v0.egodriver_pb2_grpc.EgodriverServiceServicer` by Python
+`EgodriverServiceServicer`, generated from upstream's own `egodriver.proto`, by Python
 inheritance, not by duck typing. If upstream adds an RPC,
 `test_all_upstream_rpcs_exist_and_are_implemented` fails rather than the new
 method silently returning `UNIMPLEMENTED`.
@@ -164,6 +164,10 @@ own process and point `--driver <host>:<port>` at it. The *partial* rows above
 apply — pinhole only, global shutter, no recorded ground truth — so check any
 model that assumes ftheta before relying on the result.
 
-**Both packages in one process.** Fine. Upstream `alpasim_grpc` is used as a
-dependency and its descriptors are never duplicated, so nothing collides in the
-descriptor pool.
+**Both packages in one process.** Fine at the same revision. The vendored
+protos keep upstream's file names (`alpasim_grpc/v0/*.proto`), which is what
+keeps the wire format identical; protobuf shares a file registered twice with
+the same content (the classes even come out identical), so `alpasim_grpc`'s own
+modules -- or another vendored copy, like the scenario framework's -- load beside
+these. A different revision registers different content under the same name,
+which protobuf refuses.

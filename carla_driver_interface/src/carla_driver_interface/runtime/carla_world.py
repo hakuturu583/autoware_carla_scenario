@@ -62,10 +62,12 @@ __all__ = ["CarlaWorldAdapter", "load_carla_module"]
 
 
 def load_carla_module(python_path: str | None = None) -> Any:
-    """Import ``carla``, optionally from an out-of-tree PythonAPI.
+    """The CARLA client module, optionally from an out-of-tree PythonAPI.
 
-    CARLA 0.10.x is not published on PyPI; it ships its own PythonAPI directory.
-    ``python_path`` prepends that directory to ``sys.path`` before importing.
+    ``python_path`` prepends a CARLA PythonAPI directory to ``sys.path`` first.
+    Without one, a plain ``carla`` install wins, else the client
+    ``typesafe_carla`` ships prebuilt (the ``carla`` extra), which is what the
+    scenario framework beside this package runs on.
     """
     if python_path:
         import sys
@@ -74,12 +76,15 @@ def load_carla_module(python_path: str | None = None) -> Any:
             sys.path.insert(0, python_path)
     try:
         import carla
-    except ImportError as exc:  # pragma: no cover - depends on the environment
-        raise ImportError(
-            "the `carla` module is not importable. Install the extra "
-            "(`uv sync --extra carla`, CARLA 0.9.x) or point --carla-python-path "
-            "at a 0.10.x PythonAPI directory."
-        ) from exc
+    except ImportError:
+        try:
+            import typesafe_carla.carla as carla
+        except ImportError as exc:  # pragma: no cover - depends on the environment
+            raise ImportError(
+                "no CARLA client is importable. Install the extra (`uv sync --extra "
+                "carla`, typesafe_carla) or point --carla-python-path at a CARLA "
+                "PythonAPI directory."
+            ) from exc
     return carla
 
 
@@ -679,10 +684,8 @@ class CarlaWorldAdapter:
         actors = [actor for actor in [*self._background, self._ego] if actor is not None]
         if actors and self._client is not None:
             try:
-                import carla
-
                 self._client.apply_batch_sync(
-                    [carla.command.DestroyActor(actor) for actor in actors], True
+                    [self._carla.command.DestroyActor(actor) for actor in actors], True
                 )
                 actors = []
             except (RuntimeError, ImportError, AttributeError):  # pragma: no cover

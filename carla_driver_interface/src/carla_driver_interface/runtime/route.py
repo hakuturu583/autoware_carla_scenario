@@ -72,7 +72,7 @@ class RouteProvider:
         self._progress_m = self._project(pose_local_to_rig.position)
 
         end = min(self.total_length_m, self._progress_m + self.horizon_m)
-        distances = np.arange(self._progress_m, end, self.resolution_m)
+        distances: np.ndarray = np.arange(self._progress_m, end, self.resolution_m)
         # Always finish on the exact endpoint. Without it the last stride is
         # truncated, the ego can never reach 100% completion, and the rollout
         # runs off the end of the route into undefined behaviour.

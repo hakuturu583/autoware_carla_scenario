@@ -7,27 +7,28 @@ name = "carla-driver-interface"
 version = "0.1.0"
 description = "alpasim-compatible egodriver gRPC module and a CARLA closed-loop runtime"
 readme = "README.md"
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.10,<3.13"
 license = { text = "Apache-2.0" }
 
-# Deliberately small. `alpasim-grpc` brings grpcio/protobuf/numpy transitively, but
-# we pin them here too so the contract is visible without reading upstream metadata.
+# Deliberately small: what a driver needs. alpasim's egodriver protos are
+# vendored and compiled in (proto/README.md), not taken from `alpasim-grpc`, which
+# requires Python 3.11 where Autoware's environment is 3.10.
 dependencies = [
-  "alpasim-grpc @ git+https://github.com/NVlabs/alpasim@68709245a5dc0f2eda4f8cb2c3aa8cbdfa913043#subdirectory=src/grpc",
   "grpcio>=1.60",
-  "protobuf>=4.0.0,<5.0.0",
+  "protobuf>=4.25.0,<5.0.0",
   "numpy>=1.24",
   "pillow>=10.0",
 ]
 
 [project.optional-dependencies]
-# CARLA 0.9.x publishes wheels on PyPI (0.9.16 supports cpython 3.11).
-# CARLA 0.10.x ships its own PythonAPI instead; point at it with
-# `--carla-python-path` and skip this extra.
-carla = ["carla>=0.9.15,<0.10"]
+# The runtime's CARLA client: typesafe_carla's prebuilt CPython package, the one
+# the scenario framework beside this package runs on (Linux x86_64 only). A CARLA
+# PythonAPI of your own works too: `--carla-python-path`.
+carla = ["typesafe-carla>=0.3.0,<0.4; sys_platform == 'linux' and platform_machine == 'x86_64'"]
 # Writing the map for drivers (`RuntimeConfig.map_dir`); reading it needs nothing.
 map = ["roadgen>=0.17"]
-dev = ["pytest>=8", "grpcio-tools>=1.60", "ruff>=0.6", "mypy>=1.11", "roadgen>=0.17"]
+# grpcio-tools stays on the line that emits protobuf 4.x code, matching the runtime.
+dev = ["pytest>=8", "grpcio-tools>=1.60,<1.63", "ruff>=0.6", "mypy>=1.11", "roadgen>=0.17"]
 
 [project.scripts]
 carla-driver-interface = "carla_driver_interface.cli:main"
@@ -44,27 +45,23 @@ include = [
   "docs",
 ]
 
-[tool.hatch.metadata]
-# Required for the `alpasim-grpc @ git+...` direct reference.
-allow-direct-references = true
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"
 # Generated protobuf modules are committed verbatim; formatting them would make
 # them differ from a fresh `compile_protos` run.
-extend-exclude = ["src/carla_driver_interface/grpc_api/driver_extension"]
+extend-exclude = ["src/carla_driver_interface/grpc_api/_proto"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.per-file-ignores]
 # Generated protobuf code.
-"src/carla_driver_interface/grpc_api/driver_extension/**" = ["ALL"]
+"src/carla_driver_interface/grpc_api/_proto/**" = ["ALL"]
 # BaseDriver's observation hooks are deliberately optional no-ops: a policy only
 # has to implement `drive`. Marking them abstract would force every policy to
 # stub out six methods it does not care about.
@@ -76,4 +73,4 @@ select = ["E", "F", "I", "UP", "B"]
 # reading. Pinning 3.11 while the venv is 3.12 makes mypy reject numpy's own
 # stubs, which use PEP 695 `type` statements.
 ignore_missing_imports = true
-exclude = "src/carla_driver_interface/grpc_api/driver_extension/"
+exclude = "src/carla_driver_interface/grpc_api/_proto/"

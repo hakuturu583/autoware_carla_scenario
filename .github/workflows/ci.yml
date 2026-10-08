@@ -72,8 +72,10 @@ jobs:
         install-dev-deps: "true"
         run-precommit: "false"
 
-    - name: Check package can be built
-      run: uv build --package autoware-carla-scenario
+    - name: Check packages can be built
+      run: |
+        uv build --package autoware-carla-scenario
+        uv build --package carla-driver-interface
 
   lint-and-format:
     runs-on: ubuntu-latest

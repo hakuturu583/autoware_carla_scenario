@@ -123,7 +123,7 @@ see [COMPATIBILITY.md](COMPATIBILITY.md#the-coordinate-conversion-in-detail).
 
 | file | role | alpasim counterpart |
 |---|---|---|
-| `grpc_api/__init__.py` | Single import window for the wire contract | `alpasim_grpc` |
+| `grpc_api/__init__.py` | Single import window for the wire contract (vendored protos, `grpc_api/_proto`) | `alpasim_grpc` |
 | `grpc_api/extension.py` | Pack/unpack for the extension payloads | (none) |
 | `geometry.py` | Pose / Trajectory and proto conversion, numpy only | `alpasim_utils.geometry` (Rust extension) |
 | `polyline.py` | Arc length, resampling, curvature; shared by driver and runtime | `utils_rs.Polyline` |

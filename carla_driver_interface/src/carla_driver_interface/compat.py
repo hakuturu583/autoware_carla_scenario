@@ -51,7 +51,7 @@ COMPAT_ENTRIES: tuple[CompatEntry, ...] = (
     _entry(
         "Message types",
         "Defined in alpasim_grpc",
-        "The same package is a pinned git dependency; no message is redefined",
+        "Upstream's .proto files, vendored verbatim at a pinned revision; no message is redefined",
         CompatLevel.COMPAT_LEVEL_EXACT,
         "common",
         "egodriver",
@@ -82,7 +82,7 @@ COMPAT_ENTRIES: tuple[CompatEntry, ...] = (
     _entry(
         "API version",
         "get_version reports alpasim_grpc.API_VERSION_MESSAGE",
-        "Forwarded verbatim; the runtime compares it and warns on mismatch",
+        "The release at the vendored revision; the runtime compares it and warns on mismatch",
         CompatLevel.COMPAT_LEVEL_EXACT,
         "common.VersionId",
     ),

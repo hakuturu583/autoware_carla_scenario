@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from alpasim_grpc.v0 import egodriver_pb2, egodriver_pb2_grpc
 
 from carla_driver_interface.compat import COMPAT_ENTRIES, build_report, describe_api_mismatch
 from carla_driver_interface.driver.service import CarlaEgodriverServicer
@@ -28,6 +27,7 @@ from carla_driver_interface.grpc_api import (
     EgodriverServiceServicer,
     RendererData,
 )
+from carla_driver_interface.grpc_api._proto import egodriver_pb2, egodriver_pb2_grpc
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -127,7 +127,7 @@ def test_our_proto_declares_no_service():
     Adding a service here would create a second, incompatible way to talk to a
     driver. Extensions ride inside the upstream ``bytes`` fields instead.
     """
-    from carla_driver_interface.grpc_api.driver_extension.v0 import driver_extension_pb2
+    from carla_driver_interface.grpc_api._proto import driver_extension_pb2
 
     assert not driver_extension_pb2.DESCRIPTOR.services_by_name
 
@@ -163,9 +163,8 @@ def test_compat_entries_are_mirrored_in_the_docs():
 def _load_compile_protos():
     """Load ``scripts/compile_protos.py`` by path.
 
-    Not by package name: the ``alpasim_grpc`` wheel ships its own top-level
-    ``scripts`` package, so ``import scripts.compile_protos`` would resolve to
-    upstream's copy.
+    Not by package name: ``scripts`` is not a package, and other distributions
+    ship top-level ``scripts`` packages that would shadow it.
     """
     import importlib.util
 
@@ -184,18 +183,16 @@ def test_generated_protos_are_up_to_date(tmp_path):
 
     module.compile_protos(tmp_path)
 
-    relative = Path("driver_extension") / "v0"
-
     def sources(root: Path) -> list[str]:
-        return sorted(p.name for p in (root / relative).iterdir() if p.is_file())
+        return sorted(p.name for p in root.iterdir() if p.is_file())
 
     committed = sources(OUT_ROOT)
     assert committed == sources(tmp_path)
 
     for name in committed:
-        assert filecmp.cmp(OUT_ROOT / relative / name, tmp_path / relative / name, shallow=False), (
-            f"{name} is stale; run `uv run python scripts/compile_protos.py`"
-        )
+        assert filecmp.cmp(
+            OUT_ROOT / name, tmp_path / name, shallow=False
+        ), f"{name} is stale; run `uv run python scripts/compile_protos.py`"
 
 
 def test_compat_report_cli_runs():

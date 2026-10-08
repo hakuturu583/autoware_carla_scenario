@@ -23,10 +23,10 @@ from __future__ import annotations
 import logging
 
 import numpy as np
-from alpasim_grpc.v0.common_pb2 import Pose
 from google.protobuf.message import DecodeError
 
-from carla_driver_interface.grpc_api.driver_extension.v0.driver_extension_pb2 import (
+from carla_driver_interface.grpc_api._proto.common_pb2 import Pose
+from carla_driver_interface.grpc_api._proto.driver_extension_pb2 import (
     DriveDebugInfo,
     LidarSweep,
     RendererData,

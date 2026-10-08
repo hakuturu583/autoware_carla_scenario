@@ -1,19 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """Single import window for the gRPC contract.
 
-Everything the driver and the runtime exchange over the wire comes from
-:mod:`alpasim_grpc` unchanged -- this module only re-exports it so call sites
-read consistently, and adds the CARLA extension messages that ride inside the
-upstream ``bytes`` extension points.
-
-Importing upstream symbols from here (rather than reaching into
-``alpasim_grpc``) keeps one place to look when upstream moves.
+Everything the driver and the runtime exchange over the wire is alpasim's
+``egodriver`` contract, compiled from protos vendored verbatim at
+:data:`~carla_driver_interface.ALPASIM_GRPC_REV` (``proto/README.md`` says why
+they are vendored), plus the extension messages that ride inside its ``bytes``
+extension points. This module re-exports both, so call sites read consistently
+and there is one place to look when upstream moves.
 """
 
 from __future__ import annotations
 
-from alpasim_grpc import API_VERSION_MESSAGE
-from alpasim_grpc.v0.common_pb2 import (
+from carla_driver_interface.grpc_api._proto.common_pb2 import (
     AABB,
     AvailableScenesReturn,
     DynamicState,
@@ -27,38 +25,7 @@ from alpasim_grpc.v0.common_pb2 import (
     Vec3,
     VersionId,
 )
-from alpasim_grpc.v0.egodriver_pb2 import (
-    DriveRequest,
-    DriveResponse,
-    DriveSessionCloseRequest,
-    DriveSessionRequest,
-    GroundTruth,
-    GroundTruthRequest,
-    RolloutCameraImage,
-    RolloutEgoTrajectory,
-    Route,
-    RouteRequest,
-)
-from alpasim_grpc.v0.egodriver_pb2_grpc import (
-    EgodriverServiceServicer,
-    EgodriverServiceStub,
-    add_EgodriverServiceServicer_to_server,
-)
-from alpasim_grpc.v0.runtime_pb2 import (
-    RolloutErrorCode,
-    RolloutSpec,
-    SimulationReturn,
-    TimeAggregation,
-)
-from alpasim_grpc.v0.sensorsim_pb2 import (
-    AvailableCamerasReturn,
-    CameraSpec,
-    ImageFormat,
-    OpenCVPinholeCameraParam,
-    ShutterType,
-)
-
-from carla_driver_interface.grpc_api.driver_extension.v0.driver_extension_pb2 import (
+from carla_driver_interface.grpc_api._proto.driver_extension_pb2 import (
     ActorState,
     CompatEntry,
     CompatLevel,
@@ -72,6 +39,41 @@ from carla_driver_interface.grpc_api.driver_extension.v0.driver_extension_pb2 im
     TrafficLightState,
     Weather,
 )
+from carla_driver_interface.grpc_api._proto.egodriver_pb2 import (
+    DriveRequest,
+    DriveResponse,
+    DriveSessionCloseRequest,
+    DriveSessionRequest,
+    GroundTruth,
+    GroundTruthRequest,
+    RolloutCameraImage,
+    RolloutEgoTrajectory,
+    Route,
+    RouteRequest,
+)
+from carla_driver_interface.grpc_api._proto.egodriver_pb2_grpc import (
+    EgodriverServiceServicer,
+    EgodriverServiceStub,
+    add_EgodriverServiceServicer_to_server,
+)
+from carla_driver_interface.grpc_api._proto.runtime_pb2 import (
+    RolloutErrorCode,
+    RolloutSpec,
+    SimulationReturn,
+    TimeAggregation,
+)
+from carla_driver_interface.grpc_api._proto.sensorsim_pb2 import (
+    AvailableCamerasReturn,
+    CameraSpec,
+    ImageFormat,
+    OpenCVPinholeCameraParam,
+    ShutterType,
+)
+
+#: The API version ``get_version`` reports: the ``alpasim-grpc`` release at
+#: :data:`~carla_driver_interface.ALPASIM_GRPC_REV`, which is what upstream's own
+#: ``alpasim_grpc.API_VERSION_MESSAGE`` is built from.
+API_VERSION_MESSAGE = VersionId.APIVersion(major=0, minor=55, patch=0)
 
 #: Convenience alias -- the nested camera message is deeply namespaced upstream.
 AvailableCamera = AvailableCamerasReturn.AvailableCamera

@@ -1,6 +1,9 @@
 [tool.uv.workspace]
 members = [
     "autoware_carla_scenario",
+    # The egodriver contract and its driver half, kept light so a driver policy
+    # can depend on it without the scenario framework (carla_driver_interface/README.md).
+    "carla_driver_interface",
 ]
 
 [dependency-groups]
@@ -29,7 +32,7 @@ dev = [
     "libsumo>=1.23",
     "sumolib>=1.23",
     "traci>=1.23",
-    "roadgen>=0.14.0",
+    "roadgen>=0.17.0",
     # `ui/scanner.py` and `test_driver_config.py` read YAML, and without these
     # stubs mypy reports both as untyped imports.
     "types-pyyaml>=6.0.12.20260815",
@@ -57,6 +60,7 @@ ignore_errors = true
 [tool.pytest.ini_options]
 testpaths = [
     "autoware_carla_scenario/test",
+    "carla_driver_interface/tests",
 ]
 addopts = "-n auto --testmon"
 markers = [

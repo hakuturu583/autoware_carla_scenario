@@ -20,6 +20,9 @@ Any OpenDRIVE file that describes the same place as the Lanelet2 map will do.
 ```
 .
 ├── autoware_carla_scenario/          # The framework package (uv workspace member)
+├── carla_driver_interface/           # The alpasim egodriver contract, its driver half and a
+│                                     #   closed-loop CARLA runtime (uv workspace member,
+│                                     #   published on its own so a policy needs no framework)
 ├── data/                             # nishishinjuku fixture map used by the tests and examples
 ├── examples/scenario_package_template/  # A standalone scenario package to copy
 ├── .github/actions/                  # Composite actions (incl. scenario image packing)
