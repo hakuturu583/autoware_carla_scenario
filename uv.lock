@@ -98,7 +98,11 @@ dev = [
     { name = "grpcio-tools" },
     { name = "mypy" },
     { name = "pytest" },
+    { name = "roadgen" },
     { name = "ruff" },
+]
+map = [
+    { name = "roadgen" },
 ]
 
 [package.metadata]
@@ -112,9 +116,11 @@ requires-dist = [
     { name = "pillow", specifier = ">=10.0" },
     { name = "protobuf", specifier = ">=4.0.0,<5.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "roadgen", marker = "extra == 'dev'", specifier = ">=0.17" },
+    { name = "roadgen", marker = "extra == 'map'", specifier = ">=0.17" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
 ]
-provides-extras = ["carla", "dev"]
+provides-extras = ["carla", "map", "dev"]
 
 [[package]]
 name = "colorama"
@@ -466,6 +472,16 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/43/7c/d36d04db312ecf4298932ef77e6e4a9e8ad017906e24e34f0b0c361a2473/pytest_asyncio-1.4.0.tar.gz", hash = "sha256:c6c0d2259945122819f171a32ecea2c349ead889ee28176caaf492143424be42", size = 58514, upload-time = "2026-05-26T09:56:04.083Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/03/e2/08a497ef684b88559c9cc5f4ad53a37e7b99e727094a86d6ea32536d5d3c/pytest_asyncio-1.4.0-py3-none-any.whl", hash = "sha256:933ca923a23075a87fb7070c0ec272a6848489824d887c85c812670932835aa1", size = 16930, upload-time = "2026-05-26T09:56:02.576Z" },
+]
+
+[[package]]
+name = "roadgen"
+version = "0.17.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8a/f7/0936618b902bbbf399090aab9d683bc59f045168120577fa3a8b28eafacb/roadgen-0.17.0.tar.gz", hash = "sha256:a115f6f3b2fa758f8d1cfa8319a83fbb5012cc250aed0618b03298d2e0fa0943", size = 691321, upload-time = "2026-10-06T23:38:33.271Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4d/1b/6333dda6e58f8cd3b2102226db3efd76716ab73e75542ef439acef590c09/roadgen-0.17.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:23b46c07790a15d35f032d2741e5e2f831a83a9e124525d31edf0cccd4bcf989", size = 4529080, upload-time = "2026-10-06T23:38:28.679Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/4f/d5019fb2e68e3736946b4f41125bacc75ac1b976afadeee7d1f2a44eff29/roadgen-0.17.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:94e9d1338e4e6638c9808e936183e24641926cf8805f0f68ee15b0c5474e6f90", size = 4932048, upload-time = "2026-10-06T23:38:31.158Z" },
 ]
 
 [[package]]

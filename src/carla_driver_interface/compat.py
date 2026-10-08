@@ -190,19 +190,22 @@ COMPAT_ENTRIES: tuple[CompatEntry, ...] = (
         "driver_extension.v0.LidarSweep",
     ),
     _entry(
-        "Lane map",
-        "No vector map reaches the driver; alpasim drivers read the route only",
-        "Opt-in (RuntimeConfig.send_lanes): the lanes within lane_horizon_m ride in "
-        "RendererData.lanes as rig-frame centreline and boundaries, with markings, "
-        "the governing light, the posted limit and the position along the route",
+        "Map",
+        "Services read the scene's vector map from its artifact (clipgt/*.parquet in the "
+        "USDZ); no map reaches the driver, which reads the route only",
+        "Opt-in (RuntimeConfig.map_dir): the runtime converts CARLA's OpenDRIVE with "
+        "roadgen once, at setup, into <map_dir>/<map_id>/ (Lanelet2 by default); a driver "
+        "reads that file. Each step carries only the map's dynamic layer, every traffic "
+        "light with its state and stop points, which the driver half resolves into the "
+        "driver's map format (DriveContext.stop_lines)",
         CompatLevel.COMPAT_LEVEL_EXTENSION,
-        "driver_extension.v0.Lane",
+        "driver_extension.v0.TrafficLight",
     ),
     _entry(
         "Renderer payload",
         "DriveRequest.renderer_data is free-form and NRE-specific",
         "Carries a serialized driver_extension.v0.RendererData (map, weather, "
-        "traffic light, speed limit, actors, and opt-in lanes and LiDAR). Drivers "
+        "traffic light, speed limit, actors, and opt-in map id, traffic lights and LiDAR). Drivers "
         "that ignore it are unaffected",
         CompatLevel.COMPAT_LEVEL_EXTENSION,
         "egodriver.DriveRequest.renderer_data",

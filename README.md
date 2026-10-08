@@ -155,29 +155,42 @@ class MyPolicy(BaseDriver):
 run_server(MyPolicy(), port=50051)
 ```
 
-### LiDAR and the lane map
+### LiDAR, the map and traffic lights
 
 The egodriver contract carries camera images, egomotion and a route, and
-nothing else. A policy that also needs a point cloud or a vector map gets them
-through the same extension point as the rest of the ground truth,
-`DriveRequest.renderer_data`, once the runtime is asked to send them:
+nothing else. A policy that also needs a point cloud gets one through the same
+extension point as the rest of the ground truth, `DriveRequest.renderer_data`.
+
+The map goes another way, as alpasim's does: as a file. With `--map-dir`, the
+runtime converts the world's OpenDRIVE with
+[roadgen](https://pypi.org/project/roadgen/) once, at setup, into
+`<map_dir>/<map_id>/` (Lanelet2 unless `--map-format` says otherwise; needs the
+`map` extra). A driver reads it from its own copy of that directory. Each step
+then carries only what changes, the traffic lights, which the driver half
+resolves into stop lines named by the driver's map format:
 
 ```console
-$ uv run carla-driver-interface run ... --lidar --lanes --lane-horizon 100
+$ uv run carla-driver-interface run ... --lidar --map-dir /shared/maps
 ```
 
 ```python
-def drive(self, ctx: DriveContext) -> DriveResult:
-    points = ctx.lidar_points()  # (N, 4) float32 x, y, z, intensity; rig frame
-    for lane in ctx.lanes():  # nearest first, rig frame
-        centre, left, right = lane_polylines(lane)  # grpc_api.extension
-        on_route = lane.route_index >= 0
+class MyPolicy(BaseDriver):
+    map_dir = "/shared/maps"  # the driver's copy of the runtime's --map-dir
+    map_format = "lanelet2"
+
+    def drive(self, ctx: DriveContext) -> DriveResult:
+        points = ctx.lidar_points()  # (N, 4) float32 x, y, z, intensity; rig frame
+        lanelet2_file = ctx.map.path  # the same file every step of this map
+        for stop in ctx.stop_lines():  # every light, this step's state
+            stop.lane_ids, stop.rule_ids  # lanelet and regulatory element ids
+            stop.state, stop.position_local
 ```
 
 Both are off by default: a sweep is megabytes per step and only a policy that
-reads it should pay for it. Both arrive in the rig frame, so a policy never
-handles CARLA's left-handed conventions. The message names
-(`driver_extension.v0.RendererData`, `Lane`, `LidarSweep`) say what is
+reads it should pay for it. A sweep arrives in the rig frame, so a policy never
+handles CARLA's left-handed conventions; the map and the stop lines are in the
+`local` frame, which is OpenDRIVE's own. The message names
+(`driver_extension.v0.RendererData`, `TrafficLight`, `LidarSweep`) say what is
 carried, not which simulator produced it.
 
 This driver can be **called by an alpasim runtime as-is**, and conversely

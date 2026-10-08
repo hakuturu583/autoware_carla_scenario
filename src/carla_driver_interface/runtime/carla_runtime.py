@@ -61,7 +61,7 @@ from carla_driver_interface.runtime.config import RuntimeConfig, ScenarioSpec
 from carla_driver_interface.runtime.control import TrajectoryFollower, VehicleCommand
 from carla_driver_interface.runtime.metrics import MetricsCollector
 from carla_driver_interface.runtime.route import RouteProvider
-from carla_driver_interface.runtime.world import EgoState, WorldAdapter, WorldSnapshot
+from carla_driver_interface.runtime.world import EgoState, WorldAdapter, WorldSetup, WorldSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +120,7 @@ class CarlaRuntime:
         self._pending_egomotion: list[tuple[EgoState, Pose]] = []
         self._route: RouteProvider | None = None
         self._latest: WorldSnapshot | None = None
+        self._map_id = ""
 
     # -- entry point -------------------------------------------------------
 
@@ -140,6 +141,7 @@ class CarlaRuntime:
             self._route.total_length_m,
             setup.rear_axle_offset_m,
         )
+        self._map_id = self._write_map(setup)
 
         steps = 0
         terminated_by_driver = False
@@ -298,6 +300,21 @@ class CarlaRuntime:
 
         return steps, False
 
+    def _write_map(self, setup: WorldSetup) -> str:
+        """Write the world's map for drivers to read (``map_dir``); its id, or ``""``."""
+        if self.config.map_dir is None:
+            return ""
+        if setup.opendrive is None:
+            raise RuntimeError(
+                "RuntimeConfig.map_dir is set but the world adapter supplied no OpenDRIVE "
+                "(WorldSetup.opendrive) to write the map from"
+            )
+        from carla_driver_interface.hdmap.export import export_map
+
+        return export_map(
+            setup.opendrive, setup.map_name, self.config.map_dir, self.config.map_formats
+        )
+
     def _renderer_data(self, snapshot: WorldSnapshot) -> RendererData:
         """The adapter's ground truth, plus the sweeps the tick produced.
 
@@ -306,6 +323,7 @@ class CarlaRuntime:
         thing every adapter shares instead of one more each must remember.
         """
         data = self.world.environment(snapshot)
+        data.map_id = self._map_id
         for sweep in snapshot.lidar:
             data.lidar.append(
                 pack_lidar_sweep(

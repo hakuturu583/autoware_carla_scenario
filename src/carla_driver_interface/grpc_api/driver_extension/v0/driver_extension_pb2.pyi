@@ -18,21 +18,6 @@ class TrafficLightState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     TRAFFIC_LIGHT_STATE_GREEN: _ClassVar[TrafficLightState]
     TRAFFIC_LIGHT_STATE_OFF: _ClassVar[TrafficLightState]
 
-class LaneMarkingType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = ()
-    LANE_MARKING_TYPE_UNKNOWN: _ClassVar[LaneMarkingType]
-    LANE_MARKING_TYPE_NONE: _ClassVar[LaneMarkingType]
-    LANE_MARKING_TYPE_SOLID: _ClassVar[LaneMarkingType]
-    LANE_MARKING_TYPE_BROKEN: _ClassVar[LaneMarkingType]
-    LANE_MARKING_TYPE_SOLID_SOLID: _ClassVar[LaneMarkingType]
-    LANE_MARKING_TYPE_SOLID_BROKEN: _ClassVar[LaneMarkingType]
-    LANE_MARKING_TYPE_BROKEN_SOLID: _ClassVar[LaneMarkingType]
-    LANE_MARKING_TYPE_BROKEN_BROKEN: _ClassVar[LaneMarkingType]
-    LANE_MARKING_TYPE_BOTTS_DOTS: _ClassVar[LaneMarkingType]
-    LANE_MARKING_TYPE_GRASS: _ClassVar[LaneMarkingType]
-    LANE_MARKING_TYPE_CURB: _ClassVar[LaneMarkingType]
-    LANE_MARKING_TYPE_OTHER: _ClassVar[LaneMarkingType]
-
 class CompatLevel(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     COMPAT_LEVEL_UNSPECIFIED: _ClassVar[CompatLevel]
@@ -47,18 +32,6 @@ TRAFFIC_LIGHT_STATE_RED: TrafficLightState
 TRAFFIC_LIGHT_STATE_YELLOW: TrafficLightState
 TRAFFIC_LIGHT_STATE_GREEN: TrafficLightState
 TRAFFIC_LIGHT_STATE_OFF: TrafficLightState
-LANE_MARKING_TYPE_UNKNOWN: LaneMarkingType
-LANE_MARKING_TYPE_NONE: LaneMarkingType
-LANE_MARKING_TYPE_SOLID: LaneMarkingType
-LANE_MARKING_TYPE_BROKEN: LaneMarkingType
-LANE_MARKING_TYPE_SOLID_SOLID: LaneMarkingType
-LANE_MARKING_TYPE_SOLID_BROKEN: LaneMarkingType
-LANE_MARKING_TYPE_BROKEN_SOLID: LaneMarkingType
-LANE_MARKING_TYPE_BROKEN_BROKEN: LaneMarkingType
-LANE_MARKING_TYPE_BOTTS_DOTS: LaneMarkingType
-LANE_MARKING_TYPE_GRASS: LaneMarkingType
-LANE_MARKING_TYPE_CURB: LaneMarkingType
-LANE_MARKING_TYPE_OTHER: LaneMarkingType
 COMPAT_LEVEL_UNSPECIFIED: CompatLevel
 COMPAT_LEVEL_EXACT: CompatLevel
 COMPAT_LEVEL_PARTIAL: CompatLevel
@@ -101,7 +74,7 @@ class ActorState(_message.Message):
     def __init__(self, track_id: _Optional[str] = ..., type_id: _Optional[str] = ..., pose_local_to_aabb: _Optional[_Union[_common_pb2.Pose, _Mapping]] = ..., aabb: _Optional[_Union[_common_pb2.AABB, _Mapping]] = ..., dynamic_state: _Optional[_Union[_common_pb2.DynamicState, _Mapping]] = ...) -> None: ...
 
 class RendererData(_message.Message):
-    __slots__ = ("snapshot_timestamp_us", "frame_id", "map_name", "weather", "ego_traffic_light", "ego_traffic_light_distance_m", "speed_limit_mps", "actors", "lanes", "lidar")
+    __slots__ = ("snapshot_timestamp_us", "frame_id", "map_name", "weather", "ego_traffic_light", "ego_traffic_light_distance_m", "speed_limit_mps", "actors", "lidar", "map_id", "traffic_lights")
     SNAPSHOT_TIMESTAMP_US_FIELD_NUMBER: _ClassVar[int]
     FRAME_ID_FIELD_NUMBER: _ClassVar[int]
     MAP_NAME_FIELD_NUMBER: _ClassVar[int]
@@ -110,8 +83,9 @@ class RendererData(_message.Message):
     EGO_TRAFFIC_LIGHT_DISTANCE_M_FIELD_NUMBER: _ClassVar[int]
     SPEED_LIMIT_MPS_FIELD_NUMBER: _ClassVar[int]
     ACTORS_FIELD_NUMBER: _ClassVar[int]
-    LANES_FIELD_NUMBER: _ClassVar[int]
     LIDAR_FIELD_NUMBER: _ClassVar[int]
+    MAP_ID_FIELD_NUMBER: _ClassVar[int]
+    TRAFFIC_LIGHTS_FIELD_NUMBER: _ClassVar[int]
     snapshot_timestamp_us: int
     frame_id: int
     map_name: str
@@ -120,35 +94,32 @@ class RendererData(_message.Message):
     ego_traffic_light_distance_m: float
     speed_limit_mps: float
     actors: _containers.RepeatedCompositeFieldContainer[ActorState]
-    lanes: _containers.RepeatedCompositeFieldContainer[Lane]
     lidar: _containers.RepeatedCompositeFieldContainer[LidarSweep]
-    def __init__(self, snapshot_timestamp_us: _Optional[int] = ..., frame_id: _Optional[int] = ..., map_name: _Optional[str] = ..., weather: _Optional[_Union[Weather, _Mapping]] = ..., ego_traffic_light: _Optional[_Union[TrafficLightState, str]] = ..., ego_traffic_light_distance_m: _Optional[float] = ..., speed_limit_mps: _Optional[float] = ..., actors: _Optional[_Iterable[_Union[ActorState, _Mapping]]] = ..., lanes: _Optional[_Iterable[_Union[Lane, _Mapping]]] = ..., lidar: _Optional[_Iterable[_Union[LidarSweep, _Mapping]]] = ...) -> None: ...
+    map_id: str
+    traffic_lights: _containers.RepeatedCompositeFieldContainer[TrafficLight]
+    def __init__(self, snapshot_timestamp_us: _Optional[int] = ..., frame_id: _Optional[int] = ..., map_name: _Optional[str] = ..., weather: _Optional[_Union[Weather, _Mapping]] = ..., ego_traffic_light: _Optional[_Union[TrafficLightState, str]] = ..., ego_traffic_light_distance_m: _Optional[float] = ..., speed_limit_mps: _Optional[float] = ..., actors: _Optional[_Iterable[_Union[ActorState, _Mapping]]] = ..., lidar: _Optional[_Iterable[_Union[LidarSweep, _Mapping]]] = ..., map_id: _Optional[str] = ..., traffic_lights: _Optional[_Iterable[_Union[TrafficLight, _Mapping]]] = ...) -> None: ...
 
-class Lane(_message.Message):
-    __slots__ = ("lane_id", "num_points", "centerline_xyz", "left_boundary_xyz", "right_boundary_xyz", "left_marking", "right_marking", "traffic_light", "speed_limit_mps", "route_index", "is_junction")
+class TrafficLight(_message.Message):
+    __slots__ = ("opendrive_id", "state", "stop_points")
+    OPENDRIVE_ID_FIELD_NUMBER: _ClassVar[int]
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    STOP_POINTS_FIELD_NUMBER: _ClassVar[int]
+    opendrive_id: str
+    state: TrafficLightState
+    stop_points: _containers.RepeatedCompositeFieldContainer[StopPoint]
+    def __init__(self, opendrive_id: _Optional[str] = ..., state: _Optional[_Union[TrafficLightState, str]] = ..., stop_points: _Optional[_Iterable[_Union[StopPoint, _Mapping]]] = ...) -> None: ...
+
+class StopPoint(_message.Message):
+    __slots__ = ("road_id", "section_id", "lane_id", "position_local")
+    ROAD_ID_FIELD_NUMBER: _ClassVar[int]
+    SECTION_ID_FIELD_NUMBER: _ClassVar[int]
     LANE_ID_FIELD_NUMBER: _ClassVar[int]
-    NUM_POINTS_FIELD_NUMBER: _ClassVar[int]
-    CENTERLINE_XYZ_FIELD_NUMBER: _ClassVar[int]
-    LEFT_BOUNDARY_XYZ_FIELD_NUMBER: _ClassVar[int]
-    RIGHT_BOUNDARY_XYZ_FIELD_NUMBER: _ClassVar[int]
-    LEFT_MARKING_FIELD_NUMBER: _ClassVar[int]
-    RIGHT_MARKING_FIELD_NUMBER: _ClassVar[int]
-    TRAFFIC_LIGHT_FIELD_NUMBER: _ClassVar[int]
-    SPEED_LIMIT_MPS_FIELD_NUMBER: _ClassVar[int]
-    ROUTE_INDEX_FIELD_NUMBER: _ClassVar[int]
-    IS_JUNCTION_FIELD_NUMBER: _ClassVar[int]
-    lane_id: str
-    num_points: int
-    centerline_xyz: bytes
-    left_boundary_xyz: bytes
-    right_boundary_xyz: bytes
-    left_marking: LaneMarkingType
-    right_marking: LaneMarkingType
-    traffic_light: TrafficLightState
-    speed_limit_mps: float
-    route_index: int
-    is_junction: bool
-    def __init__(self, lane_id: _Optional[str] = ..., num_points: _Optional[int] = ..., centerline_xyz: _Optional[bytes] = ..., left_boundary_xyz: _Optional[bytes] = ..., right_boundary_xyz: _Optional[bytes] = ..., left_marking: _Optional[_Union[LaneMarkingType, str]] = ..., right_marking: _Optional[_Union[LaneMarkingType, str]] = ..., traffic_light: _Optional[_Union[TrafficLightState, str]] = ..., speed_limit_mps: _Optional[float] = ..., route_index: _Optional[int] = ..., is_junction: bool = ...) -> None: ...
+    POSITION_LOCAL_FIELD_NUMBER: _ClassVar[int]
+    road_id: int
+    section_id: int
+    lane_id: int
+    position_local: _common_pb2.Vec3
+    def __init__(self, road_id: _Optional[int] = ..., section_id: _Optional[int] = ..., lane_id: _Optional[int] = ..., position_local: _Optional[_Union[_common_pb2.Vec3, _Mapping]] = ...) -> None: ...
 
 class LidarSweep(_message.Message):
     __slots__ = ("logical_id", "timestamp_us", "rig_to_lidar", "num_points", "points_xyzi")

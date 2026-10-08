@@ -25,7 +25,9 @@ dependencies = [
 # CARLA 0.10.x ships its own PythonAPI instead; point at it with
 # `--carla-python-path` and skip this extra.
 carla = ["carla>=0.9.15,<0.10"]
-dev = ["pytest>=8", "grpcio-tools>=1.60", "ruff>=0.6", "mypy>=1.11"]
+# Writing the map for drivers (`RuntimeConfig.map_dir`); reading it needs nothing.
+map = ["roadgen>=0.17"]
+dev = ["pytest>=8", "grpcio-tools>=1.60", "ruff>=0.6", "mypy>=1.11", "roadgen>=0.17"]
 
 [project.scripts]
 carla-driver-interface = "carla_driver_interface.cli:main"

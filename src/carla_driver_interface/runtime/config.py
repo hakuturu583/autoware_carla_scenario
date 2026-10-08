@@ -202,15 +202,17 @@ class RuntimeConfig:
     #: Lower it to bound the payload on maps with dense traffic; the cost of
     #: doing so is paid in what the policy stops being able to see.
     actor_horizon_m: float = 150.0
-    #: Send the drivable lanes around the ego in ``RendererData.lanes``.
-    #: Off by default for the same reason as the LiDAR: only a map-conditioned
-    #: policy reads them.
-    send_lanes: bool = False
-    #: How far from the ego a lane point is still sent, in metres. A lane
-    #: crossing the boundary is cropped to its contiguous run inside it.
-    lane_horizon_m: float = 100.0
-    #: Station spacing of the lane polylines, in metres.
-    lane_resolution_m: float = 2.0
+
+    # -- map --
+    #: Where the map is written at setup, as ``<map_dir>/<map_id>/``. A driver
+    #: reads it from its own copy of the directory, by the ``map_id`` every
+    #: ``RendererData`` carries, and resolves ``RendererData.traffic_lights``
+    #: against it. ``None`` writes no map and sends no lights.
+    map_dir: str | None = None
+    #: The formats to write, by roadgen exporter name. The OpenDRIVE source and
+    #: roadgen's IR are always written as well; drivers resolve lights through
+    #: them.
+    map_formats: tuple[str, ...] = ("lanelet2",)
 
     # -- control --
     control: ControlConfig = field(default_factory=ControlConfig)
@@ -224,8 +226,6 @@ class RuntimeConfig:
         validate_image_format(self.image_format)
         if self.fixed_delta_s <= 0.0:
             raise ValueError("fixed_delta_s must be positive")
-        if self.lane_horizon_m <= 0.0 or self.lane_resolution_m <= 0.0:
-            raise ValueError("lane_horizon_m and lane_resolution_m must be positive")
         ids = [lidar.logical_id for lidar in self.lidars]
         if len(set(ids)) != len(ids):
             raise ValueError(f"LiDAR logical ids must be unique, got {ids}")

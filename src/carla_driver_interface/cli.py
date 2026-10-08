@@ -109,15 +109,15 @@ def _add_common_rollout_args(parser: argparse.ArgumentParser) -> None:
         help="mount the default roof LiDAR and send its sweeps in RendererData.lidar",
     )
     parser.add_argument(
-        "--lanes",
-        action="store_true",
-        help="send the lanes around the ego in RendererData.lanes",
+        "--map-dir",
+        default=None,
+        help="write the map (roadgen) under DIR/<map_id>/ and send traffic lights",
     )
     parser.add_argument(
-        "--lane-horizon",
-        type=float,
-        default=100.0,
-        help="metres from the ego within which lanes are sent (with --lanes)",
+        "--map-format",
+        action="append",
+        default=None,
+        help="map format to write with --map-dir, repeatable (default: lanelet2)",
     )
     parser.add_argument(
         "--route-horizon",
@@ -227,8 +227,8 @@ def _base_config(args: argparse.Namespace) -> RuntimeConfig:
         seed=args.seed,
         image_format=parse_image_format(args.image_format),
         lidars=[LidarConfig()] if args.lidar else [],
-        send_lanes=args.lanes,
-        lane_horizon_m=args.lane_horizon,
+        map_dir=args.map_dir,
+        map_formats=tuple(args.map_format or ("lanelet2",)),
         route_horizon_m=args.route_horizon,
     )
 

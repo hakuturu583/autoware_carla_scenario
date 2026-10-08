@@ -28,9 +28,11 @@ from carla_driver_interface.geometry import dynamic_state_proto
 from carla_driver_interface.grpc_api import (
     AABB,
     ActorState,
-    Lane,
     RendererData,
+    StopPoint,
+    TrafficLight,
     TrafficLightState,
+    Vec3,
     Weather,
 )
 from carla_driver_interface.runtime.config import RuntimeConfig
@@ -38,13 +40,6 @@ from carla_driver_interface.runtime.conversions import (
     carla_transform_to_pose,
     carla_vector_to_local,
     waypoint_to_local,
-)
-from carla_driver_interface.runtime.lanes import (
-    LaneGeometry,
-    carla_lane_geometries,
-    carla_lane_key,
-    lanes_in_rig,
-    route_lane_order,
 )
 from carla_driver_interface.runtime.world import EgoState, WorldSnapshot
 
@@ -65,10 +60,6 @@ _STOP_LINE_STEP_M = 0.5
 #: zero-extent obstacle wherever CARLA happens to keep it.
 _ACTOR_PATTERNS = ("*vehicle*", "walker.pedestrian.*")
 
-#: OpenDRIVE signal type of a maximum-speed sign (German StVO 274, which
-#: OpenDRIVE and CARLA's towns use as the generic code).
-_SPEED_LIMIT_SIGNAL_TYPE = "274"
-
 
 class CarlaGroundTruth:
     """Reads the CARLA ground truth for one ego.
@@ -85,9 +76,6 @@ class CarlaGroundTruth:
         config: Supplies the sight distance, the actor horizon and the lane-walk
             step.
         map_name: Reported to the policy as the scene it is driving.
-        route_lane_ids: ``Lane.lane_id`` of each lane the ego's route visits,
-            in order. Sets ``Lane.route_index``; without it every lane is
-            reported as off the route.
     """
 
     def __init__(
@@ -97,7 +85,6 @@ class CarlaGroundTruth:
         carla_map: Any,
         config: RuntimeConfig,
         map_name: str,
-        route_lane_ids: list[str] | None = None,
     ) -> None:
         self._world = world
         self._ego = ego
@@ -106,8 +93,6 @@ class CarlaGroundTruth:
         self._map_name = map_name
         #: Light id -> where to stop for it, in the local frame. Same reason.
         self._stop_line_points_by_light: dict[int, list[np.ndarray]] = {}
-        self._route_order = route_lane_order(route_lane_ids or [])
-        self._lane_geometries: list[LaneGeometry] | None = None
 
     def read(self, snapshot: WorldSnapshot) -> RendererData:
         light = self._governing_traffic_light()
@@ -120,74 +105,52 @@ class CarlaGroundTruth:
             ego_traffic_light_distance_m=self._traffic_light_distance(light, snapshot.ego),
             speed_limit_mps=self._speed_limit_mps(),
             actors=self._actor_states(snapshot.ego) if self.config.send_actor_ground_truth else [],
-            lanes=self._lanes(snapshot.ego) if self.config.send_lanes else [],
+            traffic_lights=self._traffic_lights() if self.config.map_dir else [],
         )
 
-    def _lanes(self, ego: EgoState) -> list[Lane]:
-        """The lanes around the ego, with the light that governs each.
-
-        The geometry is read from the map once -- it does not move -- and only
-        the crop and the frame change per step.
-        """
-        if self._lane_geometries is None:
-            limits = self._speed_limits_by_road()
-            self._lane_geometries = carla_lane_geometries(
-                self._map,
-                self.config.lane_resolution_m,
-                speed_limit_for=lambda wp: limits.get(int(wp.road_id), 0.0),
+    def _traffic_lights(self) -> list[TrafficLight]:
+        """Every light with its state now; where to stop for it is cached."""
+        return [
+            TrafficLight(
+                opendrive_id=opendrive_id,
+                state=self._traffic_light_state(light),
+                stop_points=stops,
             )
-        # Each light once, however many lanes it governs.
-        _, light_by_lane_id = self._light_index
-        states = {
-            id(light): self._traffic_light_state(light) for light in light_by_lane_id.values()
-        }
-        lights = {lane_id: states[id(light)] for lane_id, light in light_by_lane_id.items()}
-        return lanes_in_rig(
-            self._lane_geometries,
-            ego.pose_local_to_rig,
-            self.config.lane_horizon_m,
-            route_order=self._route_order,
-            traffic_lights=lights,
-        )
+            for light, opendrive_id, stops in self._stop_points
+        ]
 
     @functools.cached_property
-    def _light_index(self) -> tuple[dict[tuple[int, int], list[Any]], dict[str, Any]]:
-        """Both light indexes, from one scan, on first use -- lights do not move.
+    def _lights(self) -> list[Any]:
+        """The world's traffic lights, found once -- they do not move."""
+        return list(self._world.get_actors().filter("traffic.traffic_light*"))
 
-        By ``(road_id, lane_id)``, every light, for the walk down the ego's
-        lane; by the section-qualified ``Lane.lane_id``, the first, for the
-        lanes sent to the policy. One source, so the two cannot disagree about
-        which light a lane has.
-        """
-        by_road_lane: dict[tuple[int, int], list[Any]] = {}
-        by_lane_id: dict[str, Any] = {}
-        for light in self._world.get_actors().filter("traffic.traffic_light*"):
+    @functools.cached_property
+    def _stop_lines(self) -> dict[tuple[int, int], list[Any]]:
+        """``(road_id, lane_id)`` -> the lights whose stop lines lie on that lane."""
+        index: dict[tuple[int, int], list[Any]] = {}
+        for light in self._lights:
             for waypoint in light.get_stop_waypoints():
-                by_road_lane.setdefault((waypoint.road_id, waypoint.lane_id), []).append(light)
-                by_lane_id.setdefault(carla_lane_key(waypoint), light)
-        return by_road_lane, by_lane_id
+                index.setdefault((waypoint.road_id, waypoint.lane_id), []).append(light)
+        return index
 
-    def _speed_limits_by_road(self) -> dict[int, float]:
-        """Posted limits by road id, in m/s, from the map's speed signs.
-
-        Per road rather than per lane because that is the granularity the
-        signs are placed at; a road with two different signs keeps the lower,
-        which is the one a lane-level reading could not contradict.
-        """
-        try:
-            landmarks = self._map.get_all_landmarks_of_type(_SPEED_LIMIT_SIGNAL_TYPE)
-        except (AttributeError, RuntimeError):  # pragma: no cover - build dependent
-            return {}
-        limits: dict[int, float] = {}
-        for landmark in landmarks:
-            value = float(getattr(landmark, "value", 0.0) or 0.0)
-            if value <= 0.0:
-                continue
-            unit = str(getattr(landmark, "unit", "km/h")).lower()
-            mps = value * 0.44704 if "mph" in unit else value / 3.6
-            road = int(landmark.road_id)
-            limits[road] = min(limits.get(road, mps), mps)
-        return limits
+    @functools.cached_property
+    def _stop_points(self) -> list[tuple[Any, str, list[StopPoint]]]:
+        """Each light with its OpenDRIVE id and stop points, the map's dynamic layer."""
+        lights = []
+        for light in self._lights:
+            stops = []
+            for waypoint in light.get_stop_waypoints():
+                x, y, z = waypoint_to_local(waypoint)
+                stops.append(
+                    StopPoint(
+                        road_id=int(waypoint.road_id),
+                        section_id=int(waypoint.section_id),
+                        lane_id=int(waypoint.lane_id),
+                        position_local=Vec3(x=float(x), y=float(y), z=float(z)),
+                    )
+                )
+            lights.append((light, str(light.get_opendrive_id()), stops))
+        return lights
 
     def _governing_traffic_light(self) -> Any:
         """The light the ego must obey, found by looking down its own lane.
@@ -284,7 +247,7 @@ class CarlaGroundTruth:
         """
         if not lanes:
             return []
-        stop_lines, _ = self._light_index
+        stop_lines = self._stop_lines
         found: list[Any] = []
         for lane in lanes:
             found.extend(stop_lines.get(lane, ()))

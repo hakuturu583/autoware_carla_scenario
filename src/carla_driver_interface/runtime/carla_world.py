@@ -13,7 +13,6 @@ version string, because forks report versions inconsistently.
 from __future__ import annotations
 
 import logging
-import math
 import queue
 import random
 import time
@@ -48,7 +47,6 @@ from carla_driver_interface.runtime.conversions import (
 )
 from carla_driver_interface.runtime.ground_truth import CarlaGroundTruth
 from carla_driver_interface.runtime.images import encode_bgra
-from carla_driver_interface.runtime.lanes import carla_lane_key
 from carla_driver_interface.runtime.world import (
     CameraCapture,
     EgoState,
@@ -175,7 +173,6 @@ class CarlaWorldAdapter:
         self._frame_queues: dict[str, queue.Queue] = {}
         self._sweep_queues: dict[str, queue.Queue] = {}
         self._lidar_poses: dict[str, Pose] = {}
-        self._route_lane_ids: list[str] = []
         self._events = RolloutEvents()
         self._rear_axle_offset_m = 0.0
         self._pending_control: VehicleCommand | None = None
@@ -218,6 +215,7 @@ class CarlaWorldAdapter:
             cameras=cameras,
             rear_axle_offset_m=self._rear_axle_offset_m,
             route_in_local=route,
+            opendrive=self._map.to_opendrive() if self.config.map_dir else None,
         )
 
     def _apply_weather(self, preset: str) -> None:
@@ -483,10 +481,8 @@ class CarlaWorldAdapter:
 
         waypoint = self._map.get_waypoint(spawn_transform.location, project_to_road=True)
         points = [waypoint_to_local(waypoint)]
-        self._route_lane_ids = [carla_lane_key(waypoint)]
         travelled = 0.0
         while travelled < target_length_m:
-            previous = waypoint
             options = waypoint.next(step)
             if not options:
                 break
@@ -494,16 +490,6 @@ class CarlaWorldAdapter:
                 options[self._rng.randrange(len(options))] if len(options) > 1 else options[0]
             )
             points.append(waypoint_to_local(waypoint))
-            # A connector shorter than the step can lie between two samples of
-            # different lanes; look in between so it still counts as on the route.
-            if carla_lane_key(waypoint) != carla_lane_key(previous):
-                for fraction in (0.25, 0.5, 0.75):
-                    probe = self._on_the_way(
-                        previous.next(step * fraction), waypoint, step * (1 - fraction)
-                    )
-                    if probe is not None:
-                        self._add_route_lane(probe)
-            self._add_route_lane(waypoint)
             travelled += step
 
         if len(points) < 2:
@@ -512,29 +498,6 @@ class CarlaWorldAdapter:
                 "connected lanes at that location"
             )
         return np.stack(points)
-
-    def _add_route_lane(self, waypoint: Any) -> None:
-        lane_id = carla_lane_key(waypoint)
-        if lane_id != self._route_lane_ids[-1]:
-            self._route_lane_ids.append(lane_id)
-
-    @staticmethod
-    def _on_the_way(options: list, chosen: Any, remaining_m: float) -> Any:
-        """The option that ``remaining_m`` further on reaches ``chosen``, if any.
-
-        Past a junction's branch point ``next`` offers every branch; only the
-        one leading to the waypoint the route took is on the route.
-        """
-        if len(options) == 1:
-            return options[0]
-        target = chosen.transform.location
-        for option in options:
-            for onward in option.next(max(remaining_m, 0.01)):
-                spot = onward.transform.location
-                same_lane = carla_lane_key(onward) == carla_lane_key(chosen)
-                if same_lane and math.dist((spot.x, spot.y), (target.x, target.y)) < 0.5:
-                    return option
-        return None
 
     # -- stepping ----------------------------------------------------------
 
@@ -674,7 +637,6 @@ class CarlaWorldAdapter:
                 carla_map=self._map,
                 config=self.config,
                 map_name=self.scenario.map_name,
-                route_lane_ids=self._route_lane_ids,
             )
         return self._ground_truth_reader
 

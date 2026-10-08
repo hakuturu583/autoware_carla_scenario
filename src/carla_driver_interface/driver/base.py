@@ -25,11 +25,11 @@ from carla_driver_interface.geometry import Pose, Trajectory
 from carla_driver_interface.grpc_api import (
     AvailableCamera,
     DynamicState,
-    Lane,
     LidarSweep,
     RendererData,
 )
 from carla_driver_interface.grpc_api.extension import unpack_lidar_points
+from carla_driver_interface.hdmap import MapFiles, StopLine
 
 __all__ = ["BaseDriver", "CameraFrame", "DriveContext", "DriveResult", "SessionState"]
 
@@ -121,6 +121,10 @@ class DriveContext:
     #: Simulator ground truth, when the runtime is this project's.  ``None`` when
     #: driven by upstream alpasim, or when the payload could not be parsed.
     renderer_data: RendererData | None
+    #: The world's map in the driver's format (:attr:`BaseDriver.map_format`),
+    #: opened from :attr:`BaseDriver.map_dir` by ``RendererData.map_id``.
+    #: ``None`` when the driver sets no ``map_dir`` or the runtime wrote no map.
+    map: MapFiles | None = None
 
     def lidar_sweep(self, logical_id: str | None = None) -> LidarSweep | None:
         """One sweep as it arrived, with its own timestamp and mount.
@@ -143,9 +147,15 @@ class DriveContext:
         sweep = self.lidar_sweep(logical_id)
         return None if sweep is None else unpack_lidar_points(sweep)
 
-    def lanes(self) -> list[Lane]:
-        """The lanes around the ego, nearest first; empty when none were sent."""
-        return list(self.renderer_data.lanes) if self.renderer_data is not None else []
+    def stop_lines(self) -> list[StopLine]:
+        """Every traffic light's stop lines, named by :attr:`map`'s own elements.
+
+        Empty without a map or without lights. The state is this step's; the
+        positions are in the ``local`` frame, the map's.
+        """
+        if self.map is None or self.renderer_data is None:
+            return []
+        return self.map.stop_lines(self.renderer_data.traffic_lights)
 
 
 @dataclass
@@ -178,6 +188,14 @@ class BaseDriver(ABC):
 
     #: Reported through ``get_version`` and ``DriveDebugInfo.policy_name``.
     name: str = "base"
+
+    #: Your copy of the runtime's ``RuntimeConfig.map_dir``. When set, each
+    #: :class:`DriveContext` carries the world's map from it (``ctx.map``) and
+    #: the lights resolved against it (``ctx.stop_lines()``).
+    map_dir: str | None = None
+    #: The format to read the map in; the runtime must write it
+    #: (``RuntimeConfig.map_formats``).
+    map_format: str = "lanelet2"
 
     #: How many frames per camera to retain in ``SessionState.frame_history``.
     #: 1 keeps only the newest; raise it for policies that need temporal context.

@@ -129,11 +129,12 @@ see [COMPATIBILITY.md](COMPATIBILITY.md#the-coordinate-conversion-in-detail).
 | `polyline.py` | Arc length, resampling, curvature; shared by driver and runtime | `utils_rs.Polyline` |
 | `driver/service.py` | `EgodriverService` implementation | `alpasim_driver.main.EgoDriverService` |
 | `driver/base.py` | Policy-facing API | `alpasim_driver.models.base` |
+| `hdmap/export.py` | Writes the world's map as files, via roadgen (runtime side) | the scene artifact's `clipgt/` |
+| `hdmap/files.py` | Reads them, resolves traffic lights into stop lines (driver side) | (none) |
 | `runtime/carla_runtime.py` | The orchestrator | `alpasim_runtime.worker.runtime` + `events/` |
 | `runtime/world.py` | Simulator abstraction: protocol and dataclasses only | `alpasim_runtime.services.*` |
 | `runtime/carla_world.py` | The CARLA implementation of it | `alpasim_runtime.services.*` |
 | `runtime/control.py` | Trajectory tracking | `controller.VDCService` |
-| `runtime/lanes.py` | Lane geometry, cropped into the rig frame; the CARLA map reader | (none) |
 | `runtime/route.py` | Route generation and slicing | `alpasim_runtime.route_generator` |
 | `runtime/metrics.py` | Scoring | `alpasim_eval` |
 | `compat.py` | Machine-readable definition of the differences | (none) |

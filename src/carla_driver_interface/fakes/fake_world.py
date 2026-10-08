@@ -19,8 +19,8 @@ import numpy as np
 
 from carla_driver_interface.geometry import Pose
 from carla_driver_interface.grpc_api import (
-    LaneMarkingType,
     RendererData,
+    TrafficLight,
     TrafficLightState,
     Weather,
 )
@@ -33,7 +33,6 @@ from carla_driver_interface.runtime.conversions import (
     sensor_pose_in_rig,
 )
 from carla_driver_interface.runtime.images import encode_rgb
-from carla_driver_interface.runtime.lanes import LaneGeometry, lanes_in_rig
 from carla_driver_interface.runtime.world import (
     CameraCapture,
     EgoState,
@@ -43,13 +42,8 @@ from carla_driver_interface.runtime.world import (
     WorldSnapshot,
 )
 
-__all__ = ["FakeWorld", "offset_polyline", "straight_then_curve_route"]
+__all__ = ["FakeWorld", "straight_then_curve_route"]
 
-#: Lane width of the fake road, in metres.
-FAKE_LANE_WIDTH_M = 3.5
-#: The route's own lane, and the one beside it on the right.
-FAKE_ROUTE_LANE_ID = "fake:0:-1"
-FAKE_NEIGHBOUR_LANE_ID = "fake:0:-2"
 #: Azimuth samples per channel in a synthetic sweep. Bounded so CI stays fast
 #: whatever ``points_per_second`` a test configures.
 _FAKE_LIDAR_MAX_AZIMUTHS = 360
@@ -76,17 +70,6 @@ def straight_then_curve_route(
     return np.stack(points)
 
 
-def offset_polyline(points: np.ndarray, offset_m: float) -> np.ndarray:
-    """Shift a polyline sideways, positive to the left of its direction."""
-    points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
-    tangent = np.gradient(points[:, :2], axis=0)
-    tangent /= np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
-    left = np.stack([-tangent[:, 1], tangent[:, 0]], axis=1)
-    shifted = points.copy()
-    shifted[:, :2] += offset_m * left
-    return shifted
-
-
 class FakeWorld:
     """Kinematic bicycle model standing in for a CARLA server."""
 
@@ -99,6 +82,8 @@ class FakeWorld:
         max_accel_mps2: float = 4.0,
         max_brake_mps2: float = 8.0,
         off_route_tolerance_m: float = 6.0,
+        opendrive: str | None = None,
+        traffic_lights: list[TrafficLight] | None = None,
     ) -> None:
         self.config = config
         self.scenario = scenario or ScenarioSpec(map_name="FakeTown", name="straight_then_curve")
@@ -111,6 +96,10 @@ class FakeWorld:
         self.max_accel_mps2 = max_accel_mps2
         self.max_brake_mps2 = max_brake_mps2
         self.off_route_tolerance_m = off_route_tolerance_m
+        #: Handed to the runtime as the world's map, for ``map_dir``.
+        self.opendrive = opendrive
+        #: Reported every step when the runtime writes a map; tests set states.
+        self.traffic_lights = list(traffic_lights or [])
 
         self._x = float(self._route[0][0])
         self._y = float(self._route[0][1])
@@ -128,7 +117,6 @@ class FakeWorld:
         self._events = RolloutEvents()
         #: Every ego state produced so far; tests assert on the driven path.
         self.history: list[EgoState] = []
-        self._lanes = self._build_lanes()
         self._lidar_poses = {
             lidar.logical_id: sensor_pose_in_rig(
                 lidar.x, lidar.y, lidar.z, lidar.pitch_deg, lidar.yaw_deg, lidar.roll_deg, 0.0
@@ -161,6 +149,7 @@ class FakeWorld:
             cameras=cameras,
             rear_axle_offset_m=0.0,
             route_in_local=self._route,
+            opendrive=self.opendrive,
         )
 
     def apply_control(self, command: VehicleCommand) -> None:
@@ -205,16 +194,7 @@ class FakeWorld:
             ego_traffic_light=TrafficLightState.TRAFFIC_LIGHT_STATE_NONE,
             ego_traffic_light_distance_m=-1.0,
             speed_limit_mps=self.max_speed_mps,
-            lanes=(
-                lanes_in_rig(
-                    self._lanes,
-                    snapshot.ego.pose_local_to_rig,
-                    self.config.lane_horizon_m,
-                    route_order={FAKE_ROUTE_LANE_ID: 0},
-                )
-                if self.config.send_lanes
-                else []
-            ),
+            traffic_lights=self.traffic_lights if self.config.map_dir else [],
         )
 
     def events(self) -> RolloutEvents:
@@ -286,39 +266,7 @@ class FakeWorld:
             )
         return captures
 
-    # -- map and LiDAR -----------------------------------------------------
-
-    def _build_lanes(self) -> list[LaneGeometry]:
-        """The route's lane and a same-direction neighbour on its right."""
-        half = 0.5 * FAKE_LANE_WIDTH_M
-        speed = self.max_speed_mps
-
-        def lane(lane_id: str, centre: np.ndarray, left, right) -> LaneGeometry:
-            return LaneGeometry(
-                lane_id=lane_id,
-                centerline=centre,
-                left_boundary=offset_polyline(centre, half),
-                right_boundary=offset_polyline(centre, -half),
-                left_marking=left,
-                right_marking=right,
-                speed_limit_mps=speed,
-            )
-
-        markings = LaneMarkingType
-        return [
-            lane(
-                FAKE_ROUTE_LANE_ID,
-                self._route,
-                markings.LANE_MARKING_TYPE_SOLID,
-                markings.LANE_MARKING_TYPE_BROKEN,
-            ),
-            lane(
-                FAKE_NEIGHBOUR_LANE_ID,
-                offset_polyline(self._route, -FAKE_LANE_WIDTH_M),
-                markings.LANE_MARKING_TYPE_BROKEN,
-                markings.LANE_MARKING_TYPE_CURB,
-            ),
-        ]
+    # -- LiDAR ---------------------------------------------------------------
 
     def _cast_sweep(self, lidar: LidarConfig) -> np.ndarray:
         """A flat-ground sweep: every downward beam that lands within range.
@@ -329,7 +277,7 @@ class FakeWorld:
         :func:`~carla_driver_interface.runtime.conversions.lidar_points_to_rig`
         a real sweep takes. A level, centred mount sweeps a y-symmetric ring
         that a lost mirror would leave unchanged; a rolled or offset mount does
-        not (``tests/test_lidar_and_lanes.py`` uses one).
+        not (``tests/test_lidar.py`` uses one).
         """
         pose = self._lidar_poses[lidar.logical_id]
         per_sweep = max(1, int(lidar.points_per_second * self.config.fixed_delta_s))

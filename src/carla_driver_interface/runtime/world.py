@@ -133,6 +133,9 @@ class WorldSetup:
     rear_axle_offset_m: float
     #: The full route, in the ``local`` frame, as ``(N, 3)``.
     route_in_local: np.ndarray
+    #: The world's OpenDRIVE, for writing the map (``RuntimeConfig.map_dir``);
+    #: ``None`` when the adapter has none or no map is wanted.
+    opendrive: str | None = None
 
 
 @runtime_checkable
