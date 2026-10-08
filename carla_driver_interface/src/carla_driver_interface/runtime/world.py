@@ -1,0 +1,171 @@
+# SPDX-License-Identifier: Apache-2.0
+"""The contract between the runtime and whatever is simulating the world.
+
+:class:`WorldAdapter` is the only seam between
+:class:`~carla_driver_interface.runtime.carla_runtime.CarlaRuntime` and the
+simulator. It exists for two reasons:
+
+1. CARLA 0.9.x and 0.10.x differ in small but load-bearing ways (weather fields,
+   wheel-position units, blueprint availability). Keeping the differences behind
+   this seam means the closed loop above is version-agnostic.
+2. ``carla`` is an optional dependency and cannot be installed in CI, so tests
+   substitute :class:`~carla_driver_interface.fakes.fake_world.FakeWorld`.
+
+**Whose job is the handedness flip.** Adapters speak alpasim conventions:
+everything crossing this interface is already right-handed, in metres,
+rig-anchored and in microseconds. The conversion from CARLA's left-handed world
+belongs to the adapter, and adapters should do it with
+:mod:`carla_driver_interface.runtime.conversions` rather than open-coding a sign
+flip -- that is how a fake ends up quietly disagreeing with the real thing.
+
+Only the contract lives here. The CARLA implementation is
+:mod:`carla_driver_interface.runtime.carla_world`, so that a CARLA-free process
+(the fake, or a driver-only install) never imports it.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from functools import cached_property
+from typing import Protocol, runtime_checkable
+
+import numpy as np
+
+from carla_driver_interface.geometry import Pose
+from carla_driver_interface.grpc_api import AvailableCamera, RendererData
+from carla_driver_interface.runtime.control import VehicleCommand
+from carla_driver_interface.runtime.conversions import lidar_points_to_rig
+
+__all__ = [
+    "CameraCapture",
+    "EgoState",
+    "LidarCapture",
+    "RolloutEvents",
+    "WorldAdapter",
+    "WorldSetup",
+    "WorldSnapshot",
+]
+
+
+@dataclass(frozen=True)
+class EgoState:
+    """Ego kinematics at one instant, in alpasim conventions."""
+
+    timestamp_us: int
+    #: Active transform ``local -> rig``.
+    pose_local_to_rig: Pose
+    #: Resolved in the rig frame, as ``common.DynamicState`` requires.
+    linear_velocity_in_rig: np.ndarray
+    angular_velocity_in_rig: np.ndarray
+    linear_acceleration_in_rig: np.ndarray
+
+    @property
+    def speed_mps(self) -> float:
+        return float(np.linalg.norm(self.linear_velocity_in_rig))
+
+
+@dataclass(frozen=True)
+class CameraCapture:
+    """An encoded frame ready for ``submit_image_observation``."""
+
+    logical_id: str
+    frame_start_us: int
+    frame_end_us: int
+    image_bytes: bytes
+
+
+@dataclass(frozen=True, eq=False)
+class LidarCapture:
+    """One full LiDAR sweep: CARLA's raw buffer, put into the rig frame on demand.
+
+    In the rig frame for the same reason the ego pose is rig-anchored: the
+    conversion out of CARLA's left-handed sensor frame is the adapter's job,
+    done through
+    :func:`~carla_driver_interface.runtime.conversions.lidar_points_to_rig`.
+    It runs on first read of :attr:`points_xyzi`, so the ticks between policy
+    steps -- whose snapshots are never sent -- do not pay for it.
+    """
+
+    logical_id: str
+    timestamp_us: int
+    #: The sensor's mount, in the rig frame.
+    pose_in_rig: Pose
+    #: ``[N, 4]`` float32 as CARLA reports it: sensor frame, left-handed.
+    points_in_sensor: np.ndarray
+
+    @cached_property
+    def points_xyzi(self) -> np.ndarray:
+        """``[N, 4]`` float32: x, y, z (rig frame, metres) and intensity in [0, 1]."""
+        return lidar_points_to_rig(self.points_in_sensor, self.pose_in_rig)
+
+
+@dataclass(frozen=True)
+class WorldSnapshot:
+    """The result of one simulator tick."""
+
+    frame_id: int
+    timestamp_us: int
+    ego: EgoState
+    captures: list[CameraCapture] = field(default_factory=list)
+    lidar: list[LidarCapture] = field(default_factory=list)
+
+
+@dataclass
+class RolloutEvents:
+    """Counters the metrics collector turns into rollout scores."""
+
+    collisions: int = 0
+    lane_invasions: int = 0
+    #: Frames that failed to encode. Non-zero means the driver saw fewer images
+    #: than the rollout claims, which is otherwise invisible.
+    encode_failures: int = 0
+    #: Sensor measurements that did not arrive for their tick and were skipped.
+    sensor_timeouts: int = 0
+
+
+@dataclass(frozen=True)
+class WorldSetup:
+    """What the adapter learned while building the scenario."""
+
+    map_name: str
+    cameras: list[AvailableCamera]
+    #: Signed offset from the actor origin to the rig origin, in metres.
+    rear_axle_offset_m: float
+    #: The full route, in the ``local`` frame, as ``(N, 3)``.
+    route_in_local: np.ndarray
+    #: The world's OpenDRIVE, for writing the map (``RuntimeConfig.map_dir``);
+    #: ``None`` when the adapter has none or no map is wanted.
+    opendrive: str | None = None
+
+
+@runtime_checkable
+class WorldAdapter(Protocol):
+    """What :class:`CarlaRuntime` needs from a simulator."""
+
+    def setup(self) -> WorldSetup:
+        """Build the scenario and return its description. Called once."""
+
+    def tick(self, capture: bool = True) -> WorldSnapshot:
+        """Advance by one ``fixed_delta_s``; with ``capture``, collect sensor output.
+
+        Without it the snapshot has no captures or sweeps: a policy step only
+        submits its last tick, so the ticks before it need not wait for, or
+        encode, measurements nobody reads.
+        """
+
+    def apply_control(self, command: VehicleCommand) -> None:
+        """Latch actuation, applied on the next :meth:`tick`."""
+
+    def environment(self, snapshot: WorldSnapshot) -> RendererData:
+        """Ground truth for this instant, as the extension payload itself.
+
+        Returning the proto rather than a mirror dataclass keeps one definition
+        of what the driver can be told: adding a field to
+        ``driver_extension.v0.RendererData`` is a change here and nowhere else.
+        """
+
+    def events(self) -> RolloutEvents:
+        """Cumulative collision / lane-invasion counters."""
+
+    def close(self) -> None:
+        """Destroy actors and restore the simulator's settings."""
