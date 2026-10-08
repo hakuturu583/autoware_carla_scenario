@@ -9,7 +9,12 @@ import numpy as np
 import pytest
 
 from carla_driver_interface.geometry import Pose, Trajectory
-from carla_driver_interface.runtime.control import ControlConfig, TrajectoryFollower
+from carla_driver_interface.runtime.control import (
+    ControlConfig,
+    TrajectoryFollower,
+    steer_angle,
+    steer_command,
+)
 
 from .conftest import arc_plan, straight_plan
 
@@ -44,8 +49,8 @@ def test_pure_pursuit_recovers_the_geometric_steering_angle():
     config = ControlConfig(min_lookahead_m=4.0, max_lookahead_m=4.0, wheelbase_m=2.8)
     command = TrajectoryFollower(config).step(arc_plan(radius), Pose.identity(), 8.0, 0.1)
 
-    steer_angle = -command.steer * config.max_steer_angle_rad
-    assert steer_angle == pytest.approx(math.atan(config.wheelbase_m / radius), rel=0.1)
+    expected = math.atan(config.wheelbase_m / radius)
+    assert -steer_angle(command.steer, config) == pytest.approx(expected, rel=0.1)
 
 
 def test_speed_target_is_read_from_the_plan():
@@ -138,8 +143,8 @@ def test_closed_loop_bicycle_model_converges_onto_an_offset_path():
             )
         command = follower.step(plan, Pose.from_xyz_yaw(x, y, 0.0, yaw), speed, dt)
 
-        steer_angle = -command.steer * config.max_steer_angle_rad
-        yaw += speed * math.tan(steer_angle) / config.wheelbase_m * dt
+        wheel_angle = -steer_angle(command.steer, config)
+        yaw += speed * math.tan(wheel_angle) / config.wheelbase_m * dt
         x += speed * math.cos(yaw) * dt
         y += speed * math.sin(yaw) * dt
         offsets.append(abs(y))
@@ -147,3 +152,71 @@ def test_closed_loop_bicycle_model_converges_onto_an_offset_path():
     assert offsets[-1] < 0.1, f"did not converge; final offset {offsets[-1]:.3f} m"
     assert max(offsets[100:]) < 1.0, "overshoot after convergence is too large"
     assert np.isfinite(offsets).all()
+
+
+def _yaw_rate_trace(plant, radius=60.0, speed=13.0, steps=40):
+    """Yaw rate (rad/s) per step, closing the loop through ``plant``.
+
+    ``plant`` maps the steering angle the follower commands to the one the
+    vehicle actually turns on; the measured yaw rate answers one step later,
+    as it does in the runtime.
+    """
+    config = ControlConfig()
+    follower = TrajectoryFollower(config)
+    plan = arc_plan(radius=radius, speed=speed)
+    yaw_rate, trace = 0.0, []
+    for _ in range(steps):
+        command = follower.step(plan, Pose.identity(), speed, 0.1, yaw_rate_rps=yaw_rate)
+        wheel_angle = plant(-steer_angle(command.steer, config))
+        yaw_rate = speed * math.tan(wheel_angle) / config.wheelbase_m
+        trace.append(yaw_rate)
+    return trace
+
+
+def _weak_steering(angle: float) -> float:
+    """A vehicle that turns half as much as the steering map promises."""
+    return 0.5 * angle
+
+
+def test_yaw_rate_feedback_makes_a_weakly_steering_vehicle_turn():
+    radius, speed = 60.0, 13.0
+    asked = speed / radius
+    open_loop = TrajectoryFollower(ControlConfig(yaw_rate_ki=0.0))
+    command = open_loop.step(arc_plan(radius=radius, speed=speed), Pose.identity(), speed, 0.1)
+    angle = _weak_steering(-steer_angle(command.steer, open_loop.config))
+    assert speed * math.tan(angle) / open_loop.config.wheelbase_m < 0.6 * asked
+
+    trace = _yaw_rate_trace(_weak_steering, radius, speed)
+    assert trace[15] == pytest.approx(asked, rel=0.1), "too slow to make up the weak steering"
+    assert trace[-1] == pytest.approx(asked, rel=0.01)
+
+
+def test_yaw_rate_feedback_does_not_disturb_a_vehicle_that_steers_as_modelled():
+    radius, speed = 60.0, 13.0
+    trace = _yaw_rate_trace(lambda angle: angle, radius, speed)
+    # The yaw rate is held against the curvature it answers, so a vehicle
+    # that steers as the map says needs no trim at all.
+    assert max(trace) < 1.01 * speed / radius
+    assert trace[-1] == pytest.approx(speed / radius, rel=0.01)
+
+
+def test_yaw_rate_trim_is_held_at_a_standstill():
+    """At walking pace the yaw rate says nothing about the steering."""
+    follower = TrajectoryFollower()
+    plan = arc_plan(radius=30.0)
+    follower.step(plan, Pose.identity(), 8.0, 0.1, yaw_rate_rps=0.0)
+    trim = follower._yaw_rate_trim
+    follower.step(plan, Pose.identity(), 0.2, 0.1, yaw_rate_rps=0.0)
+    assert follower._yaw_rate_trim == trim
+
+
+def test_steer_map_inverts_carla_quadratic_response():
+    """CARLA 0.10 turns the wheels by about 56 deg * steer**2."""
+    config = ControlConfig()
+    # 5 degrees needs steer 0.3 on the MKZ; a linear map over 70 would send 0.07.
+    assert steer_command(math.radians(5.0), config) == pytest.approx(0.3, abs=0.01)
+    for angle in (-0.6, -0.1, 0.0, 0.02, 0.4):
+        assert steer_angle(steer_command(angle, config), config) == pytest.approx(angle, abs=1e-9)
+    assert steer_command(math.radians(90.0), config) == 1.0
+    linear = ControlConfig(max_steer_angle_rad=math.radians(70.0), steer_exponent=1.0)
+    assert steer_command(math.radians(7.0), linear) == pytest.approx(0.1)

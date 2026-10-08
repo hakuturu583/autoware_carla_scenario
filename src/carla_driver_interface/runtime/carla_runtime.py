@@ -285,6 +285,7 @@ class CarlaRuntime:
                 snapshot.ego.pose_local_to_rig,
                 snapshot.ego.speed_mps,
                 self.config.policy_timestep_s,
+                yaw_rate_rps=float(snapshot.ego.angular_velocity_in_rig[2]),
             )
             self._record_metrics(snapshot, command, latency)
 

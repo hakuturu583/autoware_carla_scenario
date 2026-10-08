@@ -68,7 +68,7 @@ ftheta-specific code path is not exercised.
 | Area | alpasim | carla_driver_interface |
 |---|---|---|
 | **Renderer** | `SensorsimService`: NRE neural reconstruction over gRPC | CARLA's rasterizer, in process. The sensorsim RPCs are never called; only its message types are reused, to describe cameras |
-| **Controller / vehicle model** | `VDCService` over gRPC turns the plan into motion | In-process pure pursuit plus a speed PID, with CARLA's own vehicle dynamics behind it |
+| **Controller / vehicle model** | `VDCService` over gRPC turns the plan into motion | In-process pure pursuit through an inverse of CARLA's steering response, trimmed by yaw-rate feedback, plus a speed PID, with CARLA's own vehicle dynamics behind it |
 | **Physics** | `PhysicsService` performs ground-intersection correction | CARLA's physics engine keeps the vehicle on the ground; no RPC needed |
 | **Traffic** | `TrafficService` simulates other agents | CARLA TrafficManager |
 | **Coordinate frames** | Right-handed ENU `local` frame; rig origin at the rear axle centre projected onto the ground | CARLA is left-handed with the actor origin at the vehicle centre. The conversion layer mirrors y and shifts to the rear axle |
@@ -95,6 +95,20 @@ unset, it is derived from `get_physics_control().wheels` — but in CARLA 0.9.x
 `WheelPhysicsControl.position` is reported in **world coordinates,
 centimetres**, so the derived value is easy to get wrong. It is always logged at
 startup; if it looks implausible, override it.
+
+**Steering.** CARLA 0.10's Chaos vehicles do not turn the wheels in proportion
+to `VehicleControl.steer`: measured on `vehicle.lincoln.mkz`, the effective
+angle is about `56° * steer**2` (0.1 → 0.56°, 0.3 → 5.0°, 0.5 → 13.9°), the same
+at 2, 8 and 16 m/s and unchanged by tyre cornering stiffness or a flat
+`steering_curve`, whatever the reported `max_steer_angle` (70°) says. A linear
+map over 70° therefore asks for a tenth of the needed angle on a gentle curve
+and the vehicle drives it nearly straight. `ControlConfig.max_steer_angle_rad`
+and `steer_exponent` (56°, 2) invert that response; set the exponent to 1 for a
+linear vehicle. `VehicleAckermannControl` steers the same way and its built-in
+speed PID would not pull away again after a stop, so it is not used. On top of
+the map, integral feedback on the measured yaw rate (`yaw_rate_ki`) trims what
+the map and the bicycle model miss. `get_wheel_steer_angle` reads 0 in 0.10,
+so the wheel angle itself cannot be checked.
 
 Every adapter builds camera mounts through `conversions.camera_pose_in_rig`.
 Doing the mirror by hand is how a mount rotation gets dropped — a bare `-y` on

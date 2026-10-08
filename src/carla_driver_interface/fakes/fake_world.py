@@ -25,7 +25,7 @@ from carla_driver_interface.grpc_api import (
     Weather,
 )
 from carla_driver_interface.runtime.config import LidarConfig, RuntimeConfig, ScenarioSpec
-from carla_driver_interface.runtime.control import VehicleCommand
+from carla_driver_interface.runtime.control import VehicleCommand, steer_angle
 from carla_driver_interface.runtime.conversions import (
     available_camera,
     camera_pose_in_rig,
@@ -236,8 +236,8 @@ class FakeWorld:
 
         # CARLA steers positive to the right; the local frame is positive to the
         # left, hence the sign flip -- the same convention the controller uses.
-        steer_angle = -command.steer * self.config.control.max_steer_angle_rad
-        self._yaw_rate = self._speed * math.tan(steer_angle) / self.config.control.wheelbase_m
+        wheel_angle = -steer_angle(command.steer, self.config.control)
+        self._yaw_rate = self._speed * math.tan(wheel_angle) / self.config.control.wheelbase_m
 
         self._yaw += self._yaw_rate * dt
         self._x += self._speed * math.cos(self._yaw) * dt
